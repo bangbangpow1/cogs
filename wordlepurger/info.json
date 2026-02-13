@@ -1,0 +1,11 @@
+{
+    "author": ["Gabu"],
+    "description": "Deletes messages from the wordle bot.",
+    "disabled": false,
+    "end_user_data_statement": "This cog does not store any user data.",
+    "install_msg": "WordlePurger loaded! Use [p]deletewordle to start cleaning.",
+    "name": "WordlePurger",
+    "short": "Delete specific Wordle bot messages.",
+    "tags": ["utility", "purge"],
+    "version": "1.0.0"
+}
