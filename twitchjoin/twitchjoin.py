@@ -8,7 +8,7 @@ from redbot.core.bot import Red
 log = logging.getLogger("red.twitchjoin")
 
 class TwitchJoin(commands.Cog):
-    """Automated Twitch integration for new server members."""
+    """Twitch integration via Reactions in the alert channel."""
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -16,7 +16,8 @@ class TwitchJoin(commands.Cog):
         
         default_guild = {
             "admin_channel_id": None,
-            "alert_channel_id": None
+            "alert_channel_id": None,
+            "signup_message_id": None
         }
         default_member = {
             "twitch_name": None
@@ -25,59 +26,6 @@ class TwitchJoin(commands.Cog):
         self.config.register_guild(**default_guild)
         self.config.register_member(**default_member)
 
-    @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member):
-        """Triggered when a member joins; DMs them to ask for Twitch."""
-        if member.bot:
-            return
-
-        guild_data = await self.config.guild(member.guild).all()
-        if not guild_data["admin_channel_id"] or not guild_data["alert_channel_id"]:
-            return
-
-        try:
-            await member.send(f"Welcome to {member.guild.name}! Do you have a Twitch channel? (Yes/No)")
-
-            def check(m):
-                return m.author.id == member.id and isinstance(m.channel, discord.DMChannel)
-
-            msg = await self.bot.wait_for("message", check=check, timeout=300)
-            
-            if msg.content.lower() in ["yes", "y", "yeah", "yep"]:
-                await member.send("What is your Twitch channel name?")
-                name_msg = await self.bot.wait_for("message", check=check, timeout=300)
-                twitch_name = name_msg.content.split('/')[-1].strip().lower()
-
-                # Save the name so we can invoke the toggle again when they leave
-                await self.config.member(member).twitch_name.set(twitch_name)
-
-                # Invoke the command to ADD
-                await self._invoke_stream_toggle(member, twitch_name, guild_data, is_join=True)
-
-        except asyncio.TimeoutError:
-            pass
-        except discord.Forbidden:
-            log.info(f"Could not DM user {member.name} - DMs closed.")
-        except Exception as e:
-            log.error(f"Error in on_member_join: {e}")
-
-    @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member):
-        """Triggered when a member leaves; Invokes the toggle command to REMOVE."""
-        twitch_name = await self.config.member(member).twitch_name()
-        if not twitch_name:
-            return
-
-        guild_data = await self.config.guild(member.guild).all()
-        if not guild_data["admin_channel_id"] or not guild_data["alert_channel_id"]:
-            return
-
-        # Invoke the exact same command to TOGGLE it off
-        await self._invoke_stream_toggle(member, twitch_name, guild_data, is_join=False)
-        
-        # Clear data after removal
-        await self.config.member(member).clear()
-
     async def _invoke_stream_toggle(self, member: discord.Member, twitch_name: str, guild_data: dict, is_join: bool):
         """Creates a fake context to run the streamalert toggle command."""
         admin_chan = self.bot.get_channel(guild_data["admin_channel_id"])
@@ -85,11 +33,8 @@ class TwitchJoin(commands.Cog):
             return
 
         prefix = (await self.bot.get_valid_prefixes(member.guild))[0]
-        
-        # EXACT command format for both add and remove as requested
         cmd_text = f"{prefix}streamalert twitch channel {twitch_name} {guild_data['alert_channel_id']}"
 
-        # Construct the message data
         data = {
             "id": discord.utils.time_snowflake(discord.utils.utcnow()),
             "content": cmd_text,
@@ -102,61 +47,104 @@ class TwitchJoin(commands.Cog):
             },
             "channel_id": admin_chan.id,
             "guild_id": member.guild.id,
-            "attachments": [],
-            "embeds": [],
-            "mentions": [],
-            "mention_roles": [],
-            "pinned": False,
-            "mention_everyone": False,
-            "tts": False,
             "type": 0,
             "timestamp": discord.utils.utcnow().isoformat(),
-            "edited_timestamp": None,
         }
 
         fake_msg = discord.Message(state=self.bot._connection, channel=admin_chan, data=data)
         fake_msg.author = member.guild.owner 
-
         ctx = await self.bot.get_context(fake_msg)
         
         if ctx.valid:
             await self.bot.invoke(ctx)
-            
-            # Different log message for the admin channel to keep track
             log_msg = "Adding" if is_join else "Removing"
             emoji = "✅" if is_join else "❌"
-            await admin_chan.send(f"{emoji} **Automated:** {log_msg} Twitch alerts for `{twitch_name}` (Command: `{cmd_text}`)")
+            await admin_chan.send(f"{emoji} **Automated:** {log_msg} Twitch `{twitch_name}` for {member.mention}")
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionData):
+        """Listens for the checkmark reaction on the signup message."""
+        if payload.user_id == self.bot.user.id:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
+        signup_id = await self.config.guild(guild).signup_message_id()
+        if payload.message_id != signup_id:
+            return
+
+        if str(payload.emoji) != "✅":
+            return
+
+        member = guild.get_member(payload.user_id)
+        if not member:
+            return
+
+        # Remove the user's reaction so they can click it again if needed
+        channel = self.bot.get_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+        await message.remove_reaction(payload.emoji, member)
+
+        # DM Flow
+        try:
+            await member.send("What is your twitch channel? (name only)")
+
+            def check(m):
+                return m.author.id == member.id and isinstance(m.channel, discord.DMChannel)
+
+            name_msg = await self.bot.wait_for("message", check=check, timeout=300)
+            twitch_name = name_msg.content.split('/')[-1].strip().lower()
+
+            await self.config.member(member).twitch_name.set(twitch_name)
+            guild_data = await self.config.guild(guild).all()
             
-            if is_join:
-                try:
-                    await member.send(f"Success! I've added `{twitch_name}` to our stream alerts.")
-                except discord.Forbidden:
-                    pass
+            await self._invoke_stream_toggle(member, twitch_name, guild_data, is_join=True)
+            await member.send(f"Success! I've added `{twitch_name}` to our stream alerts.")
 
-    # --- ADMIN SETTINGS ---
+        except asyncio.TimeoutError:
+            pass
+        except discord.Forbidden:
+            log.info(f"Could not DM {member.name}")
 
-    @commands.group(name="twitchjoin")
-    @commands.guild_only()
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        """Cleanup when they leave."""
+        twitch_name = await self.config.member(member).twitch_name()
+        if twitch_name:
+            guild_data = await self.config.guild(member.guild).all()
+            await self._invoke_stream_toggle(member, twitch_name, guild_data, is_join=False)
+            await self.config.member(member).clear()
+
+    @commands.group()
     @commands.admin_or_permissions(manage_guild=True)
-    async def twitchjoin(self, ctx: commands.Context):
-        """Manage TwitchJoin automation settings."""
-        if ctx.invoked_subcommand is None:
-            await ctx.send_help()
+    async def twitchjoin(self, ctx):
+        """TwitchJoin Settings"""
+        pass
 
-    @twitchjoin.command(name="setup")
-    async def setup_channels(self, ctx, admin_channel: discord.TextChannel, alert_channel: discord.TextChannel):
-        """Configure the admin log and the alert destination channel."""
+    @twitchjoin.command()
+    async def setup(self, ctx, admin_channel: discord.TextChannel, alert_channel: discord.TextChannel):
+        """Set your channels."""
         await self.config.guild(ctx.guild).admin_channel_id.set(admin_channel.id)
         await self.config.guild(ctx.guild).alert_channel_id.set(alert_channel.id)
-        await ctx.send(
-            f"✅ **Configuration Saved**\n"
-            f"Admin Logs: {admin_channel.mention}\n"
-            f"Stream Alerts: {alert_channel.mention}"
-        )
+        await ctx.send("✅ Channels configured!")
 
-    @twitchjoin.command(name="test")
-    async def test_setup(self, ctx, twitch_name: str):
-        """Manually trigger the toggle command."""
-        guild_data = await self.config.guild(ctx.guild).all()
-        await self._invoke_stream_toggle(ctx.author, twitch_name, guild_data, is_join=True)
-        await ctx.send(f"Toggle command for `{twitch_name}` sent to admin channel.")
+    @twitchjoin.command()
+    async def postmsg(self, ctx):
+        """Post the signup message in the alert channel."""
+        alert_id = await self.config.guild(ctx.guild).alert_channel_id()
+        alert_chan = self.bot.get_channel(alert_id)
+        
+        if not alert_chan:
+            return await ctx.send("Set up your channels first!")
+
+        text = (
+            "If you would like your channel to be featured here every time you go live on twitch automatically, "
+            "press the button below. Your twitch will get added to a list, and a card will be placed in here "
+            "whenever you go live!"
+        )
+        msg = await alert_chan.send(text)
+        await msg.add_reaction("✅")
+        await self.config.guild(ctx.guild).signup_message_id.set(msg.id)
+        await ctx.send(f"Signup message posted in {alert_chan.mention}!")
