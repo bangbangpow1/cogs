@@ -27,6 +27,7 @@ class TwitchJoin(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
+        """Triggered when a member joins; DMs them to ask for Twitch."""
         if member.bot:
             return
 
@@ -35,7 +36,6 @@ class TwitchJoin(commands.Cog):
             return
 
         try:
-            # Step 1: DM the user
             await member.send(f"Welcome to {member.guild.name}! Do you have a Twitch channel? (Yes/No)")
 
             def check(m):
@@ -48,11 +48,11 @@ class TwitchJoin(commands.Cog):
                 name_msg = await self.bot.wait_for("message", check=check, timeout=300)
                 twitch_name = name_msg.content.split('/')[-1].strip().lower()
 
-                # Save for later
+                # Save the name so we can invoke the toggle again when they leave
                 await self.config.member(member).twitch_name.set(twitch_name)
 
-                # Step 2: Run the automated command
-                await self._automate_stream_add(member, twitch_name, guild_data)
+                # Invoke the command to ADD
+                await self._invoke_stream_toggle(member, twitch_name, guild_data, is_join=True)
 
         except asyncio.TimeoutError:
             pass
@@ -61,17 +61,35 @@ class TwitchJoin(commands.Cog):
         except Exception as e:
             log.error(f"Error in on_member_join: {e}")
 
-    async def _automate_stream_add(self, member: discord.Member, twitch_name: str, guild_data: dict):
-        """Builds a context to trigger the Streams cog."""
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        """Triggered when a member leaves; Invokes the toggle command to REMOVE."""
+        twitch_name = await self.config.member(member).twitch_name()
+        if not twitch_name:
+            return
+
+        guild_data = await self.config.guild(member.guild).all()
+        if not guild_data["admin_channel_id"] or not guild_data["alert_channel_id"]:
+            return
+
+        # Invoke the exact same command to TOGGLE it off
+        await self._invoke_stream_toggle(member, twitch_name, guild_data, is_join=False)
+        
+        # Clear data after removal
+        await self.config.member(member).clear()
+
+    async def _invoke_stream_toggle(self, member: discord.Member, twitch_name: str, guild_data: dict, is_join: bool):
+        """Creates a fake context to run the streamalert toggle command."""
         admin_chan = self.bot.get_channel(guild_data["admin_channel_id"])
         if not admin_chan:
             return
 
         prefix = (await self.bot.get_valid_prefixes(member.guild))[0]
-        # Using the exact command you specified
+        
+        # EXACT command format for both add and remove as requested
         cmd_text = f"{prefix}streamalert twitch channel {twitch_name} {guild_data['alert_channel_id']}"
 
-        # Build the fake message data
+        # Construct the message data
         data = {
             "id": discord.utils.time_snowflake(discord.utils.utcnow()),
             "content": cmd_text,
@@ -97,38 +115,25 @@ class TwitchJoin(commands.Cog):
         }
 
         fake_msg = discord.Message(state=self.bot._connection, channel=admin_chan, data=data)
-        
-        # Crucial: Ensure the author is a Member object, not just a User object
         fake_msg.author = member.guild.owner 
 
         ctx = await self.bot.get_context(fake_msg)
         
         if ctx.valid:
             await self.bot.invoke(ctx)
-            await admin_chan.send(f"🤖 **Auto-Invoking:** `{cmd_text}`")
-            await member.send(f"Success! I've sent the request to add `{twitch_name}` to alerts.")
-        else:
-            log.error(f"Could not create a valid context for command: {cmd_text}")
+            
+            # Different log message for the admin channel to keep track
+            log_msg = "Adding" if is_join else "Removing"
+            emoji = "✅" if is_join else "❌"
+            await admin_chan.send(f"{emoji} **Automated:** {log_msg} Twitch alerts for `{twitch_name}` (Command: `{cmd_text}`)")
+            
+            if is_join:
+                try:
+                    await member.send(f"Success! I've added `{twitch_name}` to our stream alerts.")
+                except discord.Forbidden:
+                    pass
 
-    @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member):
-        """Notifies admins to remove stream alerts when someone leaves."""
-        twitch_name = await self.config.member(member).twitch_name()
-        if not twitch_name:
-            return
-
-        admin_id = await self.config.guild(member.guild).admin_channel_id()
-        admin_chan = self.bot.get_channel(admin_id)
-
-        if admin_chan:
-            prefix = (await self.bot.get_valid_prefixes(member.guild))[0]
-            await admin_chan.send(
-                f"❌ **Member Left:** {member.name} has left the server.\n"
-                f"To stop their Twitch alerts, use: `{prefix}streamalert twitch stop {twitch_name}`"
-            )
-            await self.config.member(member).clear()
-
-    # --- ADMIN COMMANDS ---
+    # --- ADMIN SETTINGS ---
 
     @commands.group(name="twitchjoin")
     @commands.guild_only()
@@ -151,10 +156,7 @@ class TwitchJoin(commands.Cog):
 
     @twitchjoin.command(name="test")
     async def test_setup(self, ctx, twitch_name: str):
-        """Test the automation by trying to add a twitch channel now."""
+        """Manually trigger the toggle command."""
         guild_data = await self.config.guild(ctx.guild).all()
-        if not guild_data["admin_channel_id"]:
-            return await ctx.send("Please run `[p]twitchjoin setup` first!")
-        
-        await self._automate_stream_add(ctx.author, twitch_name, guild_data)
-        await ctx.send(f"Verification sent to admin channel for `{twitch_name}`.")
+        await self._invoke_stream_toggle(ctx.author, twitch_name, guild_data, is_join=True)
+        await ctx.send(f"Toggle command for `{twitch_name}` sent to admin channel.")
