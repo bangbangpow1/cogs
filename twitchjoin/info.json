@@ -1,0 +1,11 @@
+{
+    "author": ["Gabu"],
+    "description": "DMs new members to ask for their Twitch channel and alerts admins.",
+    "disabled": false,
+    "end_user_data_statement": "This cog does not store any persistent user data.",
+    "install_msg": "TwitchJoin loaded! Ensure you have a 'mod-log' channel for notifications.",
+    "name": "TwitchJoin",
+    "short": "On-join Twitch channel collector.",
+    "tags": ["utility", "twitch", "on-join"],
+    "version": "1.0.0"
+}
