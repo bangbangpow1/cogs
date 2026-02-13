@@ -41,8 +41,8 @@ class TwitchJoin(commands.Cog):
             "author": {
                 "id": member.guild.owner_id,
                 "username": member.guild.owner.name,
-                "discriminator": member.guild.owner.discriminator,
-                "avatar": member.guild.owner.avatar,
+                "discriminator": str(member.guild.owner.discriminator),
+                "avatar": str(member.guild.owner.avatar),
                 "bot": False,
             },
             "channel_id": admin_chan.id,
@@ -62,7 +62,7 @@ class TwitchJoin(commands.Cog):
             await admin_chan.send(f"{emoji} **Automated:** {log_msg} Twitch `{twitch_name}` for {member.mention}")
 
     @commands.Cog.listener()
-    async def on_raw_reaction_add(self, payload: discord.RawReactionData):
+    async def on_raw_reaction_add(self, payload):
         """Listens for the checkmark reaction on the signup message."""
         if payload.user_id == self.bot.user.id:
             return
@@ -83,9 +83,12 @@ class TwitchJoin(commands.Cog):
             return
 
         # Remove the user's reaction so they can click it again if needed
-        channel = self.bot.get_channel(payload.channel_id)
-        message = await channel.fetch_message(payload.message_id)
-        await message.remove_reaction(payload.emoji, member)
+        try:
+            channel = self.bot.get_channel(payload.channel_id)
+            message = await channel.fetch_message(payload.message_id)
+            await message.remove_reaction(payload.emoji, member)
+        except Exception:
+            pass
 
         # DM Flow
         try:
@@ -114,30 +117,33 @@ class TwitchJoin(commands.Cog):
         twitch_name = await self.config.member(member).twitch_name()
         if twitch_name:
             guild_data = await self.config.guild(member.guild).all()
-            await self._invoke_stream_toggle(member, twitch_name, guild_data, is_join=False)
+            if guild_data["admin_channel_id"]:
+                await self._invoke_stream_toggle(member, twitch_name, guild_data, is_join=False)
             await self.config.member(member).clear()
 
-    @commands.group()
+    @commands.group(name="twitchjoin")
+    @commands.guild_only()
     @commands.admin_or_permissions(manage_guild=True)
-    async def twitchjoin(self, ctx):
+    async def twitchjoin(self, ctx: commands.Context):
         """TwitchJoin Settings"""
-        pass
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help()
 
-    @twitchjoin.command()
-    async def setup(self, ctx, admin_channel: discord.TextChannel, alert_channel: discord.TextChannel):
+    @twitchjoin.command(name="setup")
+    async def setup_channels(self, ctx, admin_channel: discord.TextChannel, alert_channel: discord.TextChannel):
         """Set your channels."""
         await self.config.guild(ctx.guild).admin_channel_id.set(admin_channel.id)
         await self.config.guild(ctx.guild).alert_channel_id.set(alert_channel.id)
         await ctx.send("✅ Channels configured!")
 
-    @twitchjoin.command()
+    @twitchjoin.command(name="postmsg")
     async def postmsg(self, ctx):
         """Post the signup message in the alert channel."""
         alert_id = await self.config.guild(ctx.guild).alert_channel_id()
         alert_chan = self.bot.get_channel(alert_id)
         
         if not alert_chan:
-            return await ctx.send("Set up your channels first!")
+            return await ctx.send("Set up your channels first using `[p]twitchjoin setup`!")
 
         text = (
             "If you would like your channel to be featured here every time you go live on twitch automatically, "
