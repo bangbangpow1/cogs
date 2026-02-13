@@ -26,13 +26,14 @@ class TwitchJoin(commands.Cog):
         self.config.register_guild(**default_guild)
         self.config.register_member(**default_member)
 
-    async def _invoke_stream_toggle(self, member: discord.Member, twitch_name: str, guild_data: dict, is_join: bool):
+    async def _invoke_stream_toggle(self, member, twitch_name: str, guild_data: dict, is_join: bool):
         """Creates a fake context to run the streamalert toggle command."""
         admin_chan = self.bot.get_channel(guild_data["admin_channel_id"])
         if not admin_chan:
             return
 
         prefix = (await self.bot.get_valid_prefixes(member.guild))[0]
+        # Command format: [p]streamalert twitch channel <name> <id>
         cmd_text = f"{prefix}streamalert twitch channel {twitch_name} {guild_data['alert_channel_id']}"
 
         data = {
@@ -82,7 +83,7 @@ class TwitchJoin(commands.Cog):
         if not member:
             return
 
-        # Remove the user's reaction so they can click it again if needed
+        # Try to remove the reaction (requires Manage Messages)
         try:
             channel = self.bot.get_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
@@ -112,8 +113,8 @@ class TwitchJoin(commands.Cog):
             log.info(f"Could not DM {member.name}")
 
     @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member):
-        """Cleanup when they leave."""
+    async def on_member_remove(self, member):
+        """Cleanup when they leave by toggling the command again."""
         twitch_name = await self.config.member(member).twitch_name()
         if twitch_name:
             guild_data = await self.config.guild(member.guild).all()
@@ -131,7 +132,7 @@ class TwitchJoin(commands.Cog):
 
     @twitchjoin.command(name="setup")
     async def setup_channels(self, ctx, admin_channel: discord.TextChannel, alert_channel: discord.TextChannel):
-        """Set your channels."""
+        """Set your channels for logs and alerts."""
         await self.config.guild(ctx.guild).admin_channel_id.set(admin_channel.id)
         await self.config.guild(ctx.guild).alert_channel_id.set(alert_channel.id)
         await ctx.send("✅ Channels configured!")
