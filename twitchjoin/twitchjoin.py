@@ -64,6 +64,12 @@ class TwitchJoin(commands.Cog):
     async def _ask_twitch_name(self, member, guild):
         """Internal helper to handle the DM conversation."""
         try:
+            # Check if user already has a Twitch name registered
+            existing_twitch = await self.config.member(member).twitch_name()
+            if existing_twitch:
+                await member.send(f"You're already on the list with Twitch channel: `{existing_twitch}`")
+                return
+            
             await member.send("What is your twitch channel? (name only)")
 
             def check(m):
