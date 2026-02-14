@@ -67,8 +67,21 @@ class TwitchJoin(commands.Cog):
             # Check if user already has a Twitch name registered
             existing_twitch = await self.config.member(member).twitch_name()
             if existing_twitch:
-                await member.send(f"You're already on the list with Twitch channel: `{existing_twitch}`")
-                return
+                await member.send(f"You're already on the list with Twitch channel: `{existing_twitch}`\n"
+                                f"Do you want to change your current channel to something else? (Yes/No)")
+                
+                def check(m):
+                    return m.author.id == member.id and isinstance(m.channel, discord.DMChannel)
+                
+                response_msg = await self.bot.wait_for("message", check=check, timeout=300)
+                
+                if response_msg.content.lower() not in ["yes", "y", "yeah", "yep"]:
+                    await member.send("No changes made. Your current channel remains on the list.")
+                    return
+                
+                # If yes, remove the old one first
+                guild_data = await self.config.guild(guild).all()
+                await self._invoke_stream_toggle(member, existing_twitch, guild_data, is_join=False)
             
             await member.send("What is your twitch channel? (name only)")
 
