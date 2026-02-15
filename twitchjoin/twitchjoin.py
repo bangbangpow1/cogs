@@ -17,7 +17,8 @@ class TwitchJoin(commands.Cog):
         default_guild = {
             "admin_channel_id": None,
             "alert_channel_id": None,
-            "signup_message_id": None
+            "signup_message_id": None,
+            "onjoin_enabled": True
         }
         default_member = {
             "twitch_name": None
@@ -108,6 +109,8 @@ class TwitchJoin(commands.Cog):
         guild_data = await self.config.guild(member.guild).all()
         if not guild_data["admin_channel_id"] or not guild_data["alert_channel_id"]:
             return
+        if not guild_data["onjoin_enabled"]:
+            return
         try:
             await member.send(f"Welcome to {member.guild.name}! Do you have a Twitch channel? (Yes/No)")
             def check(m):
@@ -177,8 +180,14 @@ class TwitchJoin(commands.Cog):
             inline=False
         )
         embed.add_field(
+            name="Step 3: Toggle On-Join DMs (Optional)",
+            value=f"Run `{prefix}twitchjoin onjoin true/false` to enable or disable automatic DMs to new members.\n"
+                  "Default: **Enabled**",
+            inline=False
+        )
+        embed.add_field(
             name="How it Works",
-            value="• **New Members:** Get a DM automatically when they join.\n"
+            value="• **New Members:** Get a DM automatically when they join (if enabled).\n"
                   "• **Existing Members:** Click the ✅ reaction in your shoutout channel.\n"
                   "• **Automation:** The bot fakes a `streamalert` command to the Streams cog for you.\n"
                   "• **Cleanup:** When a member leaves the server, their alert is automatically removed.",
@@ -208,3 +217,15 @@ class TwitchJoin(commands.Cog):
         await msg.add_reaction("✅")
         await self.config.guild(ctx.guild).signup_message_id.set(msg.id)
         await ctx.send(f"Signup message posted in {alert_chan.mention}!")
+
+    @twitchjoin.command(name="onjoin")
+    async def onjoin_toggle(self, ctx, enabled: bool):
+        """Enable or disable automatic DMs to new members on join.
+        
+        Usage:
+        - `[p]twitchjoin onjoin true` - Enable on-join DMs
+        - `[p]twitchjoin onjoin false` - Disable on-join DMs
+        """
+        await self.config.guild(ctx.guild).onjoin_enabled.set(enabled)
+        status = "enabled" if enabled else "disabled"
+        await ctx.send(f"✅ On-join DMs have been **{status}**.")
