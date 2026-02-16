@@ -26,6 +26,9 @@ class TwitchJoin(commands.Cog):
         
         self.config.register_guild(**default_guild)
         self.config.register_member(**default_member)
+        
+        # Track users currently in the signup process
+        self.active_signups = set()
 
     async def _invoke_stream_toggle(self, member, twitch_name: str, guild_data: dict, is_join: bool):
         """Creates a fake context to run the streamalert toggle command."""
@@ -64,6 +67,13 @@ class TwitchJoin(commands.Cog):
 
     async def _ask_twitch_name(self, member, guild):
         """Internal helper to handle the DM conversation."""
+        # Check if user is already in a signup process
+        if member.id in self.active_signups:
+            return
+        
+        # Add user to active signups
+        self.active_signups.add(member.id)
+        
         try:
             # Check if user already has a Twitch name registered
             existing_twitch = await self.config.member(member).twitch_name()
@@ -101,6 +111,9 @@ class TwitchJoin(commands.Cog):
             pass
         except discord.Forbidden:
             log.info(f"Could not DM {member.name}")
+        finally:
+            # Always remove user from active signups when done
+            self.active_signups.discard(member.id)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
