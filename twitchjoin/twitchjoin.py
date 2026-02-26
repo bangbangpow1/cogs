@@ -18,7 +18,8 @@ class TwitchJoin(commands.Cog):
             "admin_channel_id": None,
             "alert_channel_id": None,
             "signup_message_id": None,
-            "onjoin_enabled": True
+            "onjoin_enabled": True,
+            "welcome_message": "Welcome to {server}! Do you have a Twitch channel? (Yes/No)"
         }
         default_member = {
             "twitch_name": None
@@ -125,7 +126,11 @@ class TwitchJoin(commands.Cog):
         if not guild_data["onjoin_enabled"]:
             return
         try:
-            await member.send(f"Welcome to {member.guild.name}! Do you have a Twitch channel? (Yes/No)")
+            welcome_msg = guild_data["welcome_message"].format(
+                server=member.guild.name,
+                member=member.display_name
+            )
+            await member.send(welcome_msg)
             def check(m):
                 return m.author.id == member.id and isinstance(m.channel, discord.DMChannel)
             msg = await self.bot.wait_for("message", check=check, timeout=300)
@@ -193,7 +198,14 @@ class TwitchJoin(commands.Cog):
             inline=False
         )
         embed.add_field(
-            name="Step 3: Toggle On-Join DMs (Optional)",
+            name="Step 3: Customize the Welcome Message (Optional)",
+            value=f"Run `{prefix}twitchjoin welcomemsg <message>` to set a custom DM sent to new members.\n"
+                  "Use `{member}` for their name and `{server}` for the server name.\n"
+                  f"Default: `Welcome to {{server}}! Do you have a Twitch channel? (Yes/No)`",
+            inline=False
+        )
+        embed.add_field(
+            name="Step 4: Toggle On-Join DMs (Optional)",
             value=f"Run `{prefix}twitchjoin onjoin true/false` to enable or disable automatic DMs to new members.\n"
                   "Default: **Enabled**",
             inline=False
@@ -230,6 +242,28 @@ class TwitchJoin(commands.Cog):
         await msg.add_reaction("✅")
         await self.config.guild(ctx.guild).signup_message_id.set(msg.id)
         await ctx.send(f"Signup message posted in {alert_chan.mention}!")
+
+    @twitchjoin.command(name="welcomemsg")
+    async def welcomemsg(self, ctx, *, message: str):
+        """Set the DM message sent to new members on join.
+
+        Available placeholders:
+        - `{member}` — the new member's display name
+        - `{server}` — the server name
+
+        The message must end with a Yes/No question so the bot knows
+        whether to continue asking for a Twitch channel.
+
+        Example:
+        `[p]twitchjoin welcomemsg Hey {member}, welcome to {server}! Got a Twitch channel? (Yes/No)`
+        """
+        await self.config.guild(ctx.guild).welcome_message.set(message)
+        preview = message.format(member=ctx.author.display_name, server=ctx.guild.name)
+        await ctx.send(
+            f"✅ **Welcome message updated!**\n"
+            f"**Preview:** {preview}\n\n"
+            f"⚠️ Make sure your message asks a Yes/No question so members can respond correctly."
+        )
 
     @twitchjoin.command(name="onjoin")
     async def onjoin_toggle(self, ctx, enabled: bool):
