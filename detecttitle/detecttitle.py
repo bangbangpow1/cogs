@@ -187,13 +187,12 @@ class DetectTitle(commands.Cog):
             
             await asyncio.sleep(60)
 
-    @commands.group(name="detecttitle")
+    @commands.group(name="detecttitle", invoke_without_command=True)
     @commands.guild_only()
     @commands.admin_or_permissions(manage_guild=True)
     async def detecttitle(self, ctx):
         """Settings for DetectTitle Twitch alerts."""
-        if ctx.invoked_subcommand is None:
-            await ctx.send_help()
+        await ctx.send_help()
 
     @detecttitle.command(name="setup")
     async def setup(self, ctx, twitch_channel: str, destination_channel: discord.TextChannel, *, keyword: str):
