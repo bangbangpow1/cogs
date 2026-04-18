@@ -1,0 +1,11 @@
+{
+    "author": ["Gabu"],
+    "description": "Monitors a Twitch channel and posts an alert if the stream title contains specific keywords.",
+    "disabled": false,
+    "end_user_data_statement": "This cog does not store any persistent user data.",
+    "install_msg": "DetectTitle loaded! Use `[p]detecttitle` to configure.",
+    "name": "DetectTitle",
+    "short": "Twitch title-based stream alerts.",
+    "tags": ["twitch", "alerts", "title"],
+    "version": "1.0.0"
+}
