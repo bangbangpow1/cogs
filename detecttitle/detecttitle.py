@@ -126,22 +126,28 @@ class DetectTitle(commands.Cog):
 
                         # Stream is online
                         stream_id = stream["id"]
-                        if stream_id == monitor_data.get("last_stream_id"):
-                            continue
-
                         title = stream["title"].lower()
                         keywords = [k.lower() for k in monitor_data.get("keywords", [])]
-                        
                         match = not keywords or any(kw in title for kw in keywords)
-                        
+                        last_id = monitor_data.get("last_stream_id")
+
                         if match:
-                            await self._delete_old_alert(guild_id, login, monitor_data)
-                            msg = await self._post_alert(guild_id, login, monitor_data, stream)
-                            async with self.config.guild_from_id(guild_id).monitors() as m:
-                                if login in m:
-                                    m[login]["last_stream_id"] = stream_id
-                                    if msg:
-                                        m[login]["last_message_id"] = msg.id
+                            if stream_id != last_id:
+                                # New stream session or title changed back to match keywords
+                                await self._delete_old_alert(guild_id, login, monitor_data)
+                                msg = await self._post_alert(guild_id, login, monitor_data, stream)
+                                async with self.config.guild_from_id(guild_id).monitors() as m:
+                                    if login in m:
+                                        m[login]["last_stream_id"] = stream_id
+                                        if msg:
+                                            m[login]["last_message_id"] = msg.id
+                        else:
+                            # Stream is online but title no longer matches keywords
+                            if last_id is not None:
+                                await self._delete_old_alert(guild_id, login, monitor_data)
+                                async with self.config.guild_from_id(guild_id).monitors() as m:
+                                    if login in m:
+                                        m[login]["last_stream_id"] = None
             except Exception as e:
                 log.error(f"Error checking batch for guild {guild_id}: {e}")
 
