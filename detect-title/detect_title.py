@@ -19,7 +19,8 @@ class DetectTitle(commands.Cog):
             "keywords": [],
             "destination_channel": None,
             "enabled": False,
-            "last_stream_id": None
+            "last_stream_id": None,
+            "last_message_id": None
         }
         self.config.register_guild(**default_guild)
         self._session: Optional[aiohttp.ClientSession] = None
@@ -61,6 +62,29 @@ class DetectTitle(commands.Cog):
             log.error(f"Exception while getting Twitch token: {e}")
         return None, None
 
+    async def _delete_old_alert(self, guild_id: int, settings: dict):
+        """Deletes the last posted alert message if it exists."""
+        if not settings["last_message_id"]:
+            return
+
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return
+
+        channel = guild.get_channel(settings["destination_channel"])
+        if not channel:
+            return
+
+        try:
+            msg = await channel.fetch_message(settings["last_message_id"])
+            await msg.delete()
+        except discord.NotFound:
+            pass # Already deleted
+        except Exception as e:
+            log.warning(f"Could not delete old alert in guild {guild_id}: {e}")
+        finally:
+            await self.config.guild_from_id(guild_id).last_message_id.set(None)
+
     async def _check_stream(self, guild_id: int, settings: dict):
         client_id, token = await self._get_twitch_auth()
         if not client_id or not token:
@@ -84,8 +108,9 @@ class DetectTitle(commands.Cog):
                 streams = data.get("data", [])
                 
                 if not streams:
-                    # Stream is offline, clear last_stream_id to allow re-alerting next time they go live
+                    # Stream is offline
                     if settings["last_stream_id"] is not None:
+                        await self._delete_old_alert(guild_id, settings)
                         await self.config.guild_from_id(guild_id).last_stream_id.set(None)
                     return
 
@@ -102,7 +127,6 @@ class DetectTitle(commands.Cog):
                 
                 match = False
                 if not keywords:
-                    # If no keywords are set, alert for any stream
                     match = True
                 else:
                     for kw in keywords:
@@ -111,13 +135,10 @@ class DetectTitle(commands.Cog):
                             break
                 
                 if match:
+                    # Clean up any existing alert before posting a new one (e.g. title changed)
+                    await self._delete_old_alert(guild_id, settings)
                     await self._post_alert(guild_id, settings, stream)
-                    # Mark as alerted so we don't repeat for the same stream
                     await self.config.guild_from_id(guild_id).last_stream_id.set(stream_id)
-                else:
-                    # If it doesn't match, we DON'T set last_stream_id,
-                    # so we can check again in the next loop in case they change the title.
-                    pass
         except Exception as e:
             log.error(f"Exception while checking stream for guild {guild_id}: {e}")
 
@@ -133,20 +154,20 @@ class DetectTitle(commands.Cog):
 
         twitch_name = stream["user_name"]
         stream_title = stream["title"]
-        # Fix thumbnail URL to a usable size
         thumbnail = stream["thumbnail_url"].replace("{width}", "1280").replace("{height}", "720")
         stream_url = f"https://www.twitch.tv/{stream['user_login']}"
 
         embed = discord.Embed(
             title=f"{twitch_name} is now live!",
             description=f"**{stream_title}**\n\nhey come check out this channel\n{stream_url}",
-            color=0x6441A5 # Twitch Purple
+            color=0x6441A5
         )
         embed.set_image(url=thumbnail)
         embed.set_footer(text="Twitch Stream Alert")
         
         try:
-            await channel.send(embed=embed)
+            msg = await channel.send(embed=embed)
+            await self.config.guild_from_id(guild_id).last_message_id.set(msg.id)
         except discord.Forbidden:
             log.warning(f"Failed to send alert in {channel.name} ({guild_id}): Permission denied")
         except Exception as e:
