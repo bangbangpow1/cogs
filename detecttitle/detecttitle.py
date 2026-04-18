@@ -9,13 +9,12 @@ from redbot.core.bot import Red
 log = logging.getLogger("red.detecttitle")
 
 class DetectTitle(commands.Cog):
-    """Monitor multiple Twitch channels for specific title keywords when they go live."""
+    """Monitor multiple Twitch channels for title keywords with auto-roles."""
 
     def __init__(self, bot: Red):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=1234567890, force_registration=True)
         
-        # New structure: monitors is a dict where key is twitch_login
         default_guild = {
             "monitors": {}
         }
@@ -59,43 +58,60 @@ class DetectTitle(commands.Cog):
             log.error(f"Exception while getting Twitch token: {e}")
         return None, None
 
-    async def _delete_old_alert(self, guild_id: int, twitch_login: str, monitor_data: dict):
-        """Deletes the last posted alert message for a specific monitor."""
-        msg_id = monitor_data.get("last_message_id")
-        if not msg_id:
+    async def _handle_role(self, guild: discord.Guild, monitor_data: dict, add: bool):
+        """Helper to add or remove the live role from the associated user."""
+        user_id = monitor_data.get("user_id")
+        role_id = monitor_data.get("role_id")
+        if not user_id or not role_id:
             return
 
-        guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return
-
-        channel = guild.get_channel(monitor_data["destination_channel"])
-        if not channel:
+        member = guild.get_member(user_id)
+        role = guild.get_role(role_id)
+        if not member or not role:
             return
 
         try:
-            msg = await channel.fetch_message(msg_id)
-            await msg.delete()
-        except discord.NotFound:
-            pass
+            if add:
+                if role not in member.roles:
+                    await member.add_roles(role, reason="Stream live (keyword match)")
+            else:
+                if role in member.roles:
+                    await member.remove_roles(role, reason="Stream offline or title mismatch")
+        except discord.Forbidden:
+            log.warning(f"Failed to manage role for {member.name} in {guild.name}: Missing Permissions")
         except Exception as e:
-            log.warning(f"Could not delete old alert for {twitch_login} in guild {guild_id}: {e}")
-        finally:
-            async with self.config.guild_from_id(guild_id).monitors() as monitors:
-                if twitch_login in monitors:
-                    monitors[twitch_login]["last_message_id"] = None
+            log.error(f"Error managing role for {member.name}: {e}")
+
+    async def _delete_old_alert(self, guild_id: int, twitch_login: str, monitor_data: dict):
+        """Deletes the alert card and handles role removal."""
+        guild = self.bot.get_guild(guild_id)
+        if not guild: return
+
+        await self._handle_role(guild, monitor_data, add=False)
+
+        msg_id = monitor_data.get("last_message_id")
+        if msg_id:
+            channel = guild.get_channel(monitor_data["destination_channel"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(msg_id)
+                    await msg.delete()
+                except discord.NotFound:
+                    pass
+                except Exception as e:
+                    log.warning(f"Could not delete alert for {twitch_login}: {e}")
+        
+        async with self.config.guild_from_id(guild_id).monitors() as monitors:
+            if twitch_login in monitors:
+                monitors[twitch_login]["last_message_id"] = None
 
     async def _check_streams(self, guild_id: int, monitors: Dict[str, dict]):
         client_id, token = await self._get_twitch_auth()
-        if not client_id or not token:
-            return
+        if not client_id or not token: return
 
-        # Prepare batch request for efficiency (Twitch allows up to 100 logins)
         logins = [login for login, data in monitors.items() if data.get("enabled", True)]
-        if not logins:
-            return
+        if not logins: return
 
-        # Twitch API limits stream checks to batches of 100
         for i in range(0, len(logins), 100):
             batch = logins[i:i+100]
             query_string = "&user_login=".join(batch)
@@ -105,8 +121,7 @@ class DetectTitle(commands.Cog):
             session = await self._get_session()
             try:
                 async with session.get(url, headers=headers) as resp:
-                    if resp.status != 200:
-                        continue
+                    if resp.status != 200: continue
                     
                     data = await resp.json()
                     active_streams = {s["user_login"].lower(): s for s in data.get("data", [])}
@@ -114,47 +129,42 @@ class DetectTitle(commands.Cog):
                     for login in batch:
                         monitor_data = monitors[login]
                         stream = active_streams.get(login)
-                        
+                        last_id = monitor_data.get("last_stream_id")
+                        guild = self.bot.get_guild(guild_id)
+                        if not guild: continue
+
                         if not stream:
-                            # Stream is offline
-                            if monitor_data.get("last_stream_id") is not None:
+                            if last_id is not None:
                                 await self._delete_old_alert(guild_id, login, monitor_data)
                                 async with self.config.guild_from_id(guild_id).monitors() as m:
-                                    if login in m:
-                                        m[login]["last_stream_id"] = None
+                                    if login in m: m[login]["last_stream_id"] = None
                             continue
 
-                        # Stream is online
                         stream_id = stream["id"]
                         title = stream["title"].lower()
                         keywords = [k.lower() for k in monitor_data.get("keywords", [])]
                         match = not keywords or any(kw in title for kw in keywords)
-                        last_id = monitor_data.get("last_stream_id")
 
                         if match:
                             if stream_id != last_id:
-                                # New stream session or title changed back to match keywords
                                 await self._delete_old_alert(guild_id, login, monitor_data)
+                                await self._handle_role(guild, monitor_data, add=True)
                                 msg = await self._post_alert(guild_id, login, monitor_data, stream)
                                 async with self.config.guild_from_id(guild_id).monitors() as m:
                                     if login in m:
                                         m[login]["last_stream_id"] = stream_id
-                                        if msg:
-                                            m[login]["last_message_id"] = msg.id
+                                        if msg: m[login]["last_message_id"] = msg.id
                         else:
-                            # Stream is online but title no longer matches keywords
                             if last_id is not None:
                                 await self._delete_old_alert(guild_id, login, monitor_data)
                                 async with self.config.guild_from_id(guild_id).monitors() as m:
-                                    if login in m:
-                                        m[login]["last_stream_id"] = None
+                                    if login in m: m[login]["last_stream_id"] = None
             except Exception as e:
                 log.error(f"Error checking batch for guild {guild_id}: {e}")
 
     async def _post_alert(self, guild_id: int, twitch_login: str, monitor_data: dict, stream: dict):
         guild = self.bot.get_guild(guild_id)
         if not guild: return None
-        
         channel = guild.get_channel(monitor_data["destination_channel"])
         if not channel: return None
 
@@ -181,8 +191,7 @@ class DetectTitle(commands.Cog):
                 all_guilds = await self.config.all_guilds()
                 for guild_id, settings in all_guilds.items():
                     monitors = settings.get("monitors", {})
-                    if monitors:
-                        await self._check_streams(guild_id, monitors)
+                    if monitors: await self._check_streams(guild_id, monitors)
             except Exception as e:
                 log.exception(f"Error in monitor loop: {e}")
             await asyncio.sleep(60)
@@ -191,14 +200,14 @@ class DetectTitle(commands.Cog):
     @commands.guild_only()
     @commands.admin_or_permissions(manage_guild=True)
     async def detecttitle(self, ctx):
-        """Manage multiple Twitch title-detection monitors."""
+        """Manage Twitch monitors with auto-roles."""
         await ctx.send_help()
 
     @detecttitle.command(name="setup")
-    async def setup(self, ctx, twitch_channel: str, destination_channel: discord.TextChannel, *, keyword: str):
-        """Add or update a Twitch channel monitor.
+    async def setup(self, ctx, twitch_channel: str, destination_channel: discord.TextChannel, keyword: str, member: discord.Member, role: discord.Role):
+        """Add a monitor with user and role association.
         
-        Example: `[p]detecttitle setup MyChannel #alerts "Playing Game"`
+        Example: `[p]detecttitle setup MyChannel #alerts "Playing Game" @Gabu @LiveRole`
         """
         login = twitch_channel.split('/')[-1].lower()
         async with self.config.guild(ctx.guild).monitors() as monitors:
@@ -206,17 +215,17 @@ class DetectTitle(commands.Cog):
                 "destination_channel": destination_channel.id,
                 "keywords": [keyword],
                 "enabled": True,
+                "user_id": member.id,
+                "role_id": role.id,
                 "last_stream_id": None,
                 "last_message_id": None
             }
         
         await ctx.send(f"✅ **Monitor set for `{login}`!**\n"
                        f"• **Destination:** {destination_channel.mention}\n"
+                       f"• **User:** {member.mention}\n"
+                       f"• **Role:** {role.name}\n"
                        f"• **Keyword:** \"{keyword}\"")
-        
-        tokens = await self.bot.get_shared_api_tokens("twitch")
-        if not tokens.get("client_id") or not tokens.get("client_secret"):
-            await ctx.send(f"⚠️ **Note:** Twitch API tokens are not set! Use `{ctx.clean_prefix}detecttitle creds`.")
 
     @detecttitle.command(name="remove")
     async def remove_monitor(self, ctx, twitch_channel: str):
@@ -224,6 +233,7 @@ class DetectTitle(commands.Cog):
         login = twitch_channel.split('/')[-1].lower()
         async with self.config.guild(ctx.guild).monitors() as monitors:
             if login in monitors:
+                await self._delete_old_alert(ctx.guild.id, login, monitors[login])
                 del monitors[login]
                 await ctx.send(f"✅ Stopped monitoring `{login}`.")
             else:
@@ -231,61 +241,19 @@ class DetectTitle(commands.Cog):
 
     @detecttitle.command(name="list")
     async def list_monitors(self, ctx):
-        """List all active Twitch monitors in this server."""
+        """List all active Twitch monitors."""
         monitors = await self.config.guild(ctx.guild).monitors()
-        if not monitors:
-            return await ctx.send("No channels are currently being monitored.")
+        if not monitors: return await ctx.send("No monitors configured.")
 
         embed = discord.Embed(title="Active Twitch Monitors", color=0x6441A5)
         for login, data in monitors.items():
-            dest = ctx.guild.get_channel(data["destination_channel"])
-            dest_name = dest.mention if dest else "Unknown Channel"
-            kws = ", ".join([f"`{k}`" for k in data["keywords"]]) or "Any stream"
+            user = ctx.guild.get_member(data.get("user_id"))
             status = "🟢 Enabled" if data.get("enabled", True) else "🔴 Disabled"
             
-            embed.add_field(
-                name=f"{login} ({status})",
-                value=f"**Dest:** {dest_name}\n**Keywords:** {kws}",
-                inline=False
-            )
+            val = f"**User:** {user.mention if user else 'Not found'}\n" \
+                  f"**Keywords:** {', '.join(data['keywords']) or 'Any'}"
+            embed.add_field(name=f"{login} ({status})", value=val, inline=False)
         await ctx.send(embed=embed)
-
-    @detecttitle.command(name="addkeyword")
-    async def add_keyword(self, ctx, twitch_channel: str, *, keyword: str):
-        """Add a keyword to an existing monitor."""
-        login = twitch_channel.split('/')[-1].lower()
-        async with self.config.guild(ctx.guild).monitors() as monitors:
-            if login not in monitors:
-                return await ctx.send(f"❌ I am not monitoring `{login}`. Use `setup` first.")
-            if keyword not in monitors[login]["keywords"]:
-                monitors[login]["keywords"].append(keyword)
-                await ctx.send(f"✅ Added keyword `{keyword}` to `{login}`.")
-            else:
-                await ctx.send(f"❌ That keyword is already set for `{login}`.")
-
-    @detecttitle.command(name="clearkeywords")
-    async def clear_keywords(self, ctx, twitch_channel: str):
-        """Remove all keywords for a monitor (will alert for any stream)."""
-        login = twitch_channel.split('/')[-1].lower()
-        async with self.config.guild(ctx.guild).monitors() as monitors:
-            if login in monitors:
-                monitors[login]["keywords"] = []
-                await ctx.send(f"✅ Keywords cleared for `{login}`. Alerting for all streams.")
-            else:
-                await ctx.send(f"❌ I am not monitoring `{login}`.")
-
-    @detecttitle.command(name="toggle")
-    async def toggle_monitor(self, ctx, twitch_channel: str):
-        """Enable or disable a specific monitor."""
-        login = twitch_channel.split('/')[-1].lower()
-        async with self.config.guild(ctx.guild).monitors() as monitors:
-            if login in monitors:
-                current = monitors[login].get("enabled", True)
-                monitors[login]["enabled"] = not current
-                status = "Enabled" if not current else "Disabled"
-                await ctx.send(f"✅ Monitor for `{login}` is now **{status}**.")
-            else:
-                await ctx.send(f"❌ I am not monitoring `{login}`.")
 
     @detecttitle.command(name="creds")
     async def show_creds_info(self, ctx):
