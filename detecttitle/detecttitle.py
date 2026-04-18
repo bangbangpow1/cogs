@@ -82,13 +82,12 @@ class DetectTitle(commands.Cog):
         except Exception as e:
             log.error(f"Error managing role for {member.name}: {e}")
 
-    async def _delete_old_alert(self, guild_id: int, twitch_login: str, monitor_data: dict):
-        """Deletes the alert card and handles role removal."""
-        guild = self.bot.get_guild(guild_id)
-        if not guild: return
-
+    async def _delete_old_alert_only(self, guild: discord.Guild, twitch_login: str, monitor_data: dict):
+        """Performs Discord cleanup (role/message) WITHOUT touching config."""
+        # Handle Role Removal
         await self._handle_role(guild, monitor_data, add=False)
 
+        # Handle Message Deletion
         msg_id = monitor_data.get("last_message_id")
         if msg_id:
             channel = guild.get_channel(monitor_data["destination_channel"])
@@ -100,10 +99,6 @@ class DetectTitle(commands.Cog):
                     pass
                 except Exception as e:
                     log.warning(f"Could not delete alert for {twitch_login}: {e}")
-        
-        async with self.config.guild_from_id(guild_id).monitors() as monitors:
-            if twitch_login in monitors:
-                monitors[twitch_login]["last_message_id"] = None
 
     async def _check_streams(self, guild_id: int, monitors: Dict[str, dict]):
         client_id, token = await self._get_twitch_auth()
@@ -111,6 +106,12 @@ class DetectTitle(commands.Cog):
 
         logins = [login for login, data in monitors.items() if data.get("enabled", True)]
         if not logins: return
+
+        guild = self.bot.get_guild(guild_id)
+        if not guild: return
+
+        # We will collect updates and save them all at once at the end
+        updates = {}
 
         for i in range(0, len(logins), 100):
             batch = logins[i:i+100]
@@ -130,14 +131,11 @@ class DetectTitle(commands.Cog):
                         monitor_data = monitors[login]
                         stream = active_streams.get(login)
                         last_id = monitor_data.get("last_stream_id")
-                        guild = self.bot.get_guild(guild_id)
-                        if not guild: continue
 
                         if not stream:
                             if last_id is not None:
-                                await self._delete_old_alert(guild_id, login, monitor_data)
-                                async with self.config.guild_from_id(guild_id).monitors() as m:
-                                    if login in m: m[login]["last_stream_id"] = None
+                                await self._delete_old_alert_only(guild, login, monitor_data)
+                                updates[login] = {"last_stream_id": None, "last_message_id": None}
                             continue
 
                         stream_id = stream["id"]
@@ -147,24 +145,27 @@ class DetectTitle(commands.Cog):
 
                         if match:
                             if stream_id != last_id:
-                                await self._delete_old_alert(guild_id, login, monitor_data)
+                                await self._delete_old_alert_only(guild, login, monitor_data)
                                 await self._handle_role(guild, monitor_data, add=True)
-                                msg = await self._post_alert(guild_id, login, monitor_data, stream)
-                                async with self.config.guild_from_id(guild_id).monitors() as m:
-                                    if login in m:
-                                        m[login]["last_stream_id"] = stream_id
-                                        if msg: m[login]["last_message_id"] = msg.id
+                                msg = await self._post_alert(guild, monitor_data, stream)
+                                updates[login] = {
+                                    "last_stream_id": stream_id,
+                                    "last_message_id": msg.id if msg else None
+                                }
                         else:
                             if last_id is not None:
-                                await self._delete_old_alert(guild_id, login, monitor_data)
-                                async with self.config.guild_from_id(guild_id).monitors() as m:
-                                    if login in m: m[login]["last_stream_id"] = None
+                                await self._delete_old_alert_only(guild, login, monitor_data)
+                                updates[login] = {"last_stream_id": None, "last_message_id": None}
             except Exception as e:
                 log.error(f"Error checking batch for guild {guild_id}: {e}")
 
-    async def _post_alert(self, guild_id: int, twitch_login: str, monitor_data: dict, stream: dict):
-        guild = self.bot.get_guild(guild_id)
-        if not guild: return None
+        if updates:
+            async with self.config.guild(guild).monitors() as m:
+                for login, data in updates.items():
+                    if login in m:
+                        m[login].update(data)
+
+    async def _post_alert(self, guild: discord.Guild, monitor_data: dict, stream: dict):
         channel = guild.get_channel(monitor_data["destination_channel"])
         if not channel: return None
 
@@ -233,11 +234,19 @@ class DetectTitle(commands.Cog):
         login = twitch_channel.split('/')[-1].lower()
         async with self.config.guild(ctx.guild).monitors() as monitors:
             if login in monitors:
-                await self._delete_old_alert(ctx.guild.id, login, monitors[login])
+                # Cleanup Discord side only
+                await self._delete_old_alert_only(ctx.guild, login, monitors[login])
+                # Delete from config
                 del monitors[login]
                 await ctx.send(f"✅ Stopped monitoring `{login}`.")
             else:
                 await ctx.send(f"❌ I am not monitoring `{login}`.")
+
+    @detecttitle.command(name="clearall")
+    async def clear_all(self, ctx):
+        """Wipe ALL monitors for this server."""
+        await self.config.guild(ctx.guild).monitors.set({})
+        await ctx.send("✅ All monitors have been wiped for this server.")
 
     @detecttitle.command(name="list")
     async def list_monitors(self, ctx):
