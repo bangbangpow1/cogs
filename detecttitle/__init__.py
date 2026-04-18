@@ -1,4 +1,4 @@
-from .detect_title import DetectTitle
+from .detecttitle import DetectTitle
 
 async def setup(bot):
     cog = DetectTitle(bot)
