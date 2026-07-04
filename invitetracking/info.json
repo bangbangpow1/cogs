@@ -1,0 +1,11 @@
+{
+    "author": ["Gabu"],
+    "description": "Generate invite links via a button and track who joins using them.",
+    "disabled": false,
+    "end_user_data_statement": "Stores Discord user IDs of invite creators and members who joined via tracked invites.",
+    "install_msg": "Use `[p]invites setup #channel` to place the invite button.\n\n**Required Permissions:**\n- `Create Invite` in the target channel\n- `Manage Guild` to run setup commands\n\n**Required Intents:**\n- `members` intent (for tracking joins)\n\n**Commands:**\n- `[p]invites setup [#channel]` — place the invite button\n- `[p]invites list` — show all tracked invites\n- `[p]invites user [member]` — show a member's invite stats\n- `[p]invites channel` — show the configured channel\n- `[p]invites clear` — clear all invite data\n- `[p]invites remove` — remove the button message",
+    "name": "InviteTracking",
+    "short": "Invite link generation and usage tracking.",
+    "tags": ["invites", "tracking", "invite", "join"],
+    "version": "1.0.0"
+}
