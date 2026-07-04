@@ -181,32 +181,41 @@ class InviteTracking(commands.Cog):
 
         old_cache = await self._get_invite_cache(guild)
         new_cache = {}
-        used_code = None
+        used_invite = None
 
         for inv in current_invites:
             new_cache[inv.code] = inv.uses
             old_uses = old_cache.get(inv.code, 0)
             if inv.uses > old_uses:
-                used_code = inv.code
+                used_invite = inv
 
         await self.config.guild(guild).invite_cache.set(new_cache)
 
-        if not used_code:
+        if not used_invite:
             return
 
         stored = await self.config.guild(guild).invites()
-        if used_code not in stored:
-            return
+        if used_invite.code not in stored:
+            stored[used_invite.code] = {
+                "creator_id": used_invite.inviter.id if used_invite.inviter else None,
+                "creator_name": str(used_invite.inviter) if used_invite.inviter else "Unknown",
+                "channel_id": used_invite.channel.id if used_invite.channel else None,
+                "max_age": used_invite.max_age,
+                "max_uses": used_invite.max_uses,
+                "uses": used_invite.uses,
+                "used_by": [],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
 
-        stored[used_code]["uses"] = new_cache[used_code]
-        if member.id not in stored[used_code]["used_by"]:
-            stored[used_code]["used_by"].append(member.id)
+        stored[used_invite.code]["uses"] = new_cache[used_invite.code]
+        if member.id not in stored[used_invite.code]["used_by"]:
+            stored[used_invite.code]["used_by"].append(member.id)
         await self.config.guild(guild).invites.set(stored)
 
         log.info(
             "%s joined %s using invite %s (created by %s)",
-            member, guild.name, used_code,
-            stored[used_code].get("creator_name", "unknown")
+            member, guild.name, used_invite.code,
+            stored[used_invite.code].get("creator_name", "unknown")
         )
 
     @commands.Cog.listener()
