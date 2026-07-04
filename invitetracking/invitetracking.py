@@ -210,6 +210,37 @@ class InviteTracking(commands.Cog):
         )
 
     @commands.Cog.listener()
+    async def on_invite_create(self, invite: discord.Invite):
+        guild = invite.guild
+        if guild is None:
+            return
+
+        stored = await self.config.guild(guild).invites()
+        if invite.code in stored:
+            return
+
+        stored[invite.code] = {
+            "creator_id": invite.inviter.id if invite.inviter else None,
+            "creator_name": str(invite.inviter) if invite.inviter else "Unknown",
+            "channel_id": invite.channel.id if invite.channel else None,
+            "max_age": invite.max_age,
+            "max_uses": invite.max_uses,
+            "uses": invite.uses,
+            "used_by": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await self.config.guild(guild).invites.set(stored)
+
+        cache = await self._get_invite_cache(guild)
+        cache[invite.code] = invite.uses
+        await self.config.guild(guild).invite_cache.set(cache)
+
+        log.info(
+            "Tracking invite %s created by %s in %s",
+            invite.code, stored[invite.code]["creator_name"], guild.name
+        )
+
+    @commands.Cog.listener()
     async def on_invite_delete(self, invite: discord.Invite):
         guild = invite.guild
         if guild is None:
