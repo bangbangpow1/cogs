@@ -228,6 +228,24 @@ class InviteTracking(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    @invites.command(name="remove")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def invites_remove(self, ctx: commands.Context, code: str):
+        """Remove tracking for a specific invite code."""
+        stored = await self.config.guild(ctx.guild).invites()
+        if code not in stored:
+            await ctx.send(f"Invite `{code}` is not being tracked.")
+            return
+
+        del stored[code]
+        await self.config.guild(ctx.guild).invites.set(stored)
+
+        cache = await self._get_invite_cache(ctx.guild)
+        cache.pop(code, None)
+        await self.config.guild(ctx.guild).invite_cache.set(cache)
+
+        await ctx.send(f"Tracking removed for invite `{code}`.")
+
     @invites.command(name="clear")
     @commands.admin_or_permissions(manage_guild=True)
     async def invites_clear(self, ctx: commands.Context):

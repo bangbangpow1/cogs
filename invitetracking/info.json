@@ -3,7 +3,7 @@
     "description": "Automatically tracks all invite links created in the server and who joins using them.",
     "disabled": false,
     "end_user_data_statement": "Stores Discord user IDs of invite creators and members who joined via tracked invites.",
-    "install_msg": "Invite tracking is automatic after loading — no setup needed.\n\n**Required Intents:**\n- `members` intent (for tracking joins)\n\n**Commands:**\n- `[p]invites list` — show all tracked invites\n- `[p]invites user [member]` — show a member's invite stats\n- `[p]invites clear` — clear all invite data",
+    "install_msg": "Invite tracking is automatic after loading — no setup needed.\n\n**Required Intents:**\n- `members` intent (for tracking joins)\n\n**Commands:**\n- `[p]invites list` — show all tracked invites\n- `[p]invites user [member]` — show a member's invite stats\n- `[p]invites remove <code>` — remove tracking for a specific invite\n- `[p]invites clear` — clear all invite data",
     "name": "InviteTracking",
     "short": "Automatic invite link usage tracking.",
     "tags": ["invites", "tracking", "invite", "join"],
