@@ -193,7 +193,8 @@ class InviteTracking(commands.Cog):
             color=discord.Color.blue()
         )
 
-        for code, data in list(stored.items())[:10]:
+        sorted_invites = sorted(stored.items(), key=lambda x: len(x[1].get("used_by", [])), reverse=True)
+        for code, data in sorted_invites[:10]:
             creator = ctx.guild.get_member(data["creator_id"])
             creator_name = creator.mention if creator else data.get("creator_name", "Unknown")
             used_by = data.get("used_by", [])
