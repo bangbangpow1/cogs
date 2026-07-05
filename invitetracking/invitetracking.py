@@ -1,3 +1,4 @@
+import asyncio
 import discord
 import logging
 from typing import Dict
@@ -22,25 +23,54 @@ class InviteTracking(commands.Cog):
         self.config.register_guild(**default_guild)
 
         bot.loop.create_task(self._initialize())
+        self._sync_task = bot.loop.create_task(self._sync_loop())
 
-    async def _initialize(self):
+    def cog_unload(self):
+        self._sync_task.cancel()
+
+    async def _sync_loop(self):
         await self.bot.wait_until_ready()
+        while True:
+            await asyncio.sleep(300)
+            for guild in self.bot.guilds:
+                await self._sync_untracked_invites(guild)
 
-        for guild in self.bot.guilds:
-            await self._refresh_invite_cache(guild)
-
-        log.info("InviteTracking cog initialized")
-
-    async def _refresh_invite_cache(self, guild: discord.Guild):
+    async def _sync_untracked_invites(self, guild: discord.Guild):
         try:
             invites = await guild.invites()
         except (discord.Forbidden, discord.HTTPException):
             return
 
-        cache = {}
+        stored = await self.config.guild(guild).invites()
+        cache = await self._get_invite_cache(guild)
+        changed = False
+
         for inv in invites:
+            if inv.code not in stored:
+                stored[inv.code] = {
+                    "creator_id": inv.inviter.id if inv.inviter else None,
+                    "creator_name": str(inv.inviter) if inv.inviter else "Unknown",
+                    "channel_id": inv.channel.id if inv.channel else None,
+                    "max_age": inv.max_age,
+                    "max_uses": inv.max_uses,
+                    "uses": inv.uses,
+                    "used_by": [],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                changed = True
             cache[inv.code] = inv.uses
+
+        if changed:
+            await self.config.guild(guild).invites.set(stored)
         await self.config.guild(guild).invite_cache.set(cache)
+
+    async def _initialize(self):
+        await self.bot.wait_until_ready()
+
+        for guild in self.bot.guilds:
+            await self._sync_untracked_invites(guild)
+
+        log.info("InviteTracking cog initialized")
 
     async def _get_invite_cache(self, guild: discord.Guild) -> Dict[str, int]:
         return await self.config.guild(guild).invite_cache() or {}
@@ -57,33 +87,35 @@ class InviteTracking(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             return
 
+        stored = await self.config.guild(guild).invites()
         old_cache = await self._get_invite_cache(guild)
         new_cache = {}
         used_invite = None
 
         for inv in current_invites:
             new_cache[inv.code] = inv.uses
+
+            if inv.code not in stored:
+                stored[inv.code] = {
+                    "creator_id": inv.inviter.id if inv.inviter else None,
+                    "creator_name": str(inv.inviter) if inv.inviter else "Unknown",
+                    "channel_id": inv.channel.id if inv.channel else None,
+                    "max_age": inv.max_age,
+                    "max_uses": inv.max_uses,
+                    "uses": inv.uses,
+                    "used_by": [],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+
             old_uses = old_cache.get(inv.code, 0)
             if inv.uses > old_uses:
                 used_invite = inv
 
         await self.config.guild(guild).invite_cache.set(new_cache)
+        await self.config.guild(guild).invites.set(stored)
 
         if not used_invite:
             return
-
-        stored = await self.config.guild(guild).invites()
-        if used_invite.code not in stored:
-            stored[used_invite.code] = {
-                "creator_id": used_invite.inviter.id if used_invite.inviter else None,
-                "creator_name": str(used_invite.inviter) if used_invite.inviter else "Unknown",
-                "channel_id": used_invite.channel.id if used_invite.channel else None,
-                "max_age": used_invite.max_age,
-                "max_uses": used_invite.max_uses,
-                "uses": used_invite.uses,
-                "used_by": [],
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
 
         stored[used_invite.code]["uses"] = new_cache[used_invite.code]
         if member.id not in stored[used_invite.code]["used_by"]:
