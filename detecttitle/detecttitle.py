@@ -5,6 +5,7 @@ import logging
 from typing import Optional, List, Dict
 from redbot.core import commands, Config
 from redbot.core.bot import Red
+from discord.utils import get
 
 log = logging.getLogger("red.detecttitle")
 
@@ -180,8 +181,10 @@ class DetectTitle(commands.Cog):
         embed.set_image(url=thumbnail)
         embed.set_footer(text="Twitch Stream Alert")
         
+        livestream_role = get(guild.roles, name="Livestreams")
+        content = livestream_role.mention if livestream_role else ""
         try:
-            return await channel.send(embed=embed)
+            return await channel.send(content=content, embed=embed)
         except:
             return None
 
