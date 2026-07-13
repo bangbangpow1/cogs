@@ -1,0 +1,11 @@
+{
+    "author": ["Gabu"],
+    "description": "Create and manage criminal and civil dockets with ease. Features persistent buttons for quick docket creation, hearing date management, and user notifications.",
+    "disabled": false,
+    "end_user_data_statement": "Stores Discord user IDs of docket creators and case details entered via forms.",
+    "install_msg": "Thank you for installing DocketWizard!\n\n**Setup:**\n- Use `[p]dw setup #channel` to set up the docket buttons in a channel.\n\n**Commands:**\n- `[p]dw setup <channel>` — set up docket buttons\n- `[p]dw remove` — remove docket wizard setup\n- `[p]dw list [criminal|civil]` — list recent dockets\n- `[p]dw view <case_id>` — view docket details\n- `[p]dw hearing <case_id> <date>` — add/update hearing date\n- `[p]dw notify <case_id> <@users>` — notify users about a docket\n\n**Required Intents:**\n- `message_content` intent",
+    "name": "DocketWizard",
+    "short": "Criminal & Civil docket management system.",
+    "tags": ["docket", "court", "criminal", "civil", "legal", "law", "case"],
+    "version": "1.0.0"
+}
