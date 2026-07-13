@@ -662,6 +662,109 @@ class _DocketWizardView(discord.ui.View):
         )
 
 
+class _SetupSelect(discord.ui.ChannelSelect):
+    def __init__(self, store_attr, channel_types, placeholder, min_vals, max_vals):
+        super().__init__(
+            channel_types=channel_types,
+            placeholder=placeholder,
+            min_values=min_vals,
+            max_values=max_vals,
+        )
+        self._store_attr = store_attr
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user != self.view.author:
+            await interaction.response.send_message("Only the command author can configure setup.", ephemeral=True)
+            return
+        if self.values:
+            setattr(self.view, self._store_attr, self.values[0])
+        await self.view.refresh(interaction)
+
+
+class _SetupRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, store_attr, placeholder, min_vals, max_vals):
+        super().__init__(
+            placeholder=placeholder,
+            min_values=min_vals,
+            max_values=max_vals,
+        )
+        self._store_attr = store_attr
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user != self.view.author:
+            await interaction.response.send_message("Only the command author can configure setup.", ephemeral=True)
+            return
+        setattr(self.view, self._store_attr, self.values[0] if self.values else None)
+        await self.view.refresh(interaction)
+
+
+class _SetupView(discord.ui.View):
+    def __init__(self, cog, author):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.author = author
+        self.text_channel = None
+        self.forum_channel = None
+        self.role = None
+
+        self.add_item(_SetupSelect(
+            "text_channel", [discord.ChannelType.text],
+            "Select the text channel for buttons", 1, 1,
+        ))
+        self.add_item(_SetupSelect(
+            "forum_channel", [discord.ChannelType.forum],
+            "Select the forum channel for docket threads", 1, 1,
+        ))
+        self.add_item(_SetupRoleSelect(
+            "role", "Select edit role (optional)", 0, 1,
+        ))
+
+        done = discord.ui.Button(label="Complete Setup", style=discord.ButtonStyle.success, row=3)
+        done.callback = self._complete
+        self.add_item(done)
+
+    def _status_embed(self):
+        lines = [
+            f"**Text Channel:** {self.text_channel.mention if self.text_channel else 'Not set'}",
+            f"**Forum Channel:** {self.forum_channel.mention if self.forum_channel else 'Not set'}",
+            f"**Edit Role:** {self.role.mention if self.role else 'None (optional)'}",
+        ]
+        return discord.Embed(
+            title="\u2696\ufe0f DocketWizard Setup",
+            description="\n".join(lines),
+            color=discord.Color.gold(),
+        )
+
+    async def refresh(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(embed=self._status_embed(), view=self)
+
+    async def _complete(self, interaction: discord.Interaction):
+        if interaction.user != self.author:
+            await interaction.response.send_message("Only the command author can configure setup.", ephemeral=True)
+            return
+        if not self.text_channel or not self.forum_channel:
+            await interaction.response.send_message("Please select both a text channel and a forum channel.", ephemeral=True)
+            return
+
+        view = _DocketWizardView(self.cog)
+        embed = discord.Embed(
+            title="\u2696\ufe0f DocketWizard",
+            description="Click a button below to create a new docket entry.",
+            color=discord.Color.gold(),
+        )
+        msg = await self.text_channel.send(embed=embed, view=view)
+        await self.cog.config.guild(interaction.guild).channel_id.set(self.text_channel.id)
+        await self.cog.config.guild(interaction.guild).setup_message_id.set(msg.id)
+        await self.cog.config.guild(interaction.guild).forum_channel_id.set(self.forum_channel.id)
+        if self.role:
+            await self.cog.config.guild(interaction.guild).docket_creator_role_id.set(self.role.id)
+
+        await interaction.response.edit_message(
+            content=f"Setup complete! Buttons sent to {self.text_channel.mention}.",
+            embed=None, view=None,
+        )
+
+
 class DocketWizard(commands.Cog):
     """Create and manage criminal and civil dockets."""
 
@@ -711,37 +814,13 @@ class DocketWizard(commands.Cog):
 
     @dw.command(name="setup")
     @commands.admin_or_permissions(administrator=True)
-    async def setup(
-        self,
-        ctx: commands.Context,
-        channel: discord.TextChannel,
-        forum_channel: discord.ForumChannel,
-        role: discord.Role = None,
-    ):
-        """Set up the docket wizard.
-
-        Parameters:
-        -----------
-        channel : discord.TextChannel
-            The channel where the docket buttons will appear.
-        forum_channel : discord.ForumChannel
-            The forum channel where docket threads will be created.
-        role : discord.Role
-            The role that can edit dockets (optional, can be set later with `setrole`).
-        """
-        view = _DocketWizardView(self)
-        embed = discord.Embed(
-            title="\u2696\ufe0f DocketWizard",
-            description="Click a button below to create a new docket entry.",
-            color=discord.Color.gold(),
-        )
-        msg = await channel.send(embed=embed, view=view)
-
-        await self.config.guild(ctx.guild).channel_id.set(channel.id)
-        await self.config.guild(ctx.guild).setup_message_id.set(msg.id)
-        await self.config.guild(ctx.guild).forum_channel_id.set(forum_channel.id)
-        if role:
-            await self.config.guild(ctx.guild).docket_creator_role_id.set(role.id)
+    async def setup(self, ctx: commands.Context):
+        """Set up the docket wizard interactively."""
+        view = _SetupView(self, ctx.author)
+        try:
+            await ctx.send(embed=view._status_embed(), view=view, ephemeral=True)
+        except TypeError:
+            await ctx.send(embed=view._status_embed(), view=view)
 
 
 
