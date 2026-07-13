@@ -53,15 +53,15 @@ class DocketWizard(commands.Cog):
 
     @dw.command(name="setup")
     @commands.admin_or_permissions(administrator=True)
-    async def setup(self, ctx: commands.Context, channel: discord.TextChannel, forum_channel: discord.ForumChannel = None):
-        """Set up the docket wizard in a channel.
+    async def setup(self, ctx: commands.Context, channel: discord.TextChannel, forum_channel: discord.ForumChannel):
+        """Set up the docket wizard.
 
         Parameters:
         -----------
         channel : discord.TextChannel
             The channel where the docket buttons will appear.
         forum_channel : discord.ForumChannel
-            The forum channel where docket threads will be created (can be set later with `setforum`).
+            The forum channel where docket threads will be created.
         """
         view = _DocketWizardView(self)
         embed = discord.Embed(
@@ -73,13 +73,9 @@ class DocketWizard(commands.Cog):
 
         await self.config.guild(ctx.guild).channel_id.set(channel.id)
         await self.config.guild(ctx.guild).setup_message_id.set(msg.id)
-        if forum_channel:
-            await self.config.guild(ctx.guild).forum_channel_id.set(forum_channel.id)
+        await self.config.guild(ctx.guild).forum_channel_id.set(forum_channel.id)
 
-        if forum_channel:
-            await ctx.send(f"DocketWizard has been set up in {channel.mention}. Docket threads will be created in {forum_channel.mention}.")
-        else:
-            await ctx.send(f"DocketWizard has been set up in {channel.mention}. Use `{ctx.prefix}dw setforum <forum>` to set a forum for docket threads.")
+        await ctx.send(f"DocketWizard set up! Buttons in {channel.mention}, docket threads in {forum_channel.mention}.")
 
     @dw.command(name="setforum")
     @commands.admin_or_permissions(administrator=True)
