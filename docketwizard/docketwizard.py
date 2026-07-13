@@ -281,7 +281,6 @@ class _CriminalEditView(discord.ui.View):
             ("defendant", "Defendant", data.get("defendant", ""), True, "Full name"),
             ("attorney", "Attorney", data.get("attorney", ""), False, "Defense attorney name"),
             ("filed_by", "Filed By", data.get("filed_by", ""), True, "Officer or DA"),
-            ("hearing_date", "Hearing Date", data.get("hearing_date", ""), False, "e.g., July 20, 2026"),
         ]
 
         for i in range(0, len(fields), 3):
