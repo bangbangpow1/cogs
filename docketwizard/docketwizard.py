@@ -19,6 +19,10 @@ def _build_criminal_embed(case_id, data):
         f"**Filed By :** {_mention(data, 'filed_by')}\n"
         f"**Filed At :** {data.get('created_at', 'N/A')}\n"
     )
+    charges = data.get("charges")
+    if charges:
+        bulleted = "\n".join(f"\u2022 {c.strip()}" for c in charges.split("\n") if c.strip())
+        desc += f"**Charges:**\n{bulleted}\n"
     if data.get("hearing_date"):
         desc += f"**Hearing Date :** {data['hearing_date']}\n"
     embed = discord.Embed(
@@ -113,7 +117,7 @@ async def _cleanup_stale_case(guild, cog, case_id):
 
 
 class _EditFieldModal(discord.ui.Modal):
-    def __init__(self, cog, case_id, field_name, label, current_value, placeholder="", required=False):
+    def __init__(self, cog, case_id, field_name, label, current_value, placeholder="", required=False, multiline=False):
         super().__init__(title=f"Edit {label}")
         self.cog = cog
         self.case_id = case_id
@@ -125,7 +129,8 @@ class _EditFieldModal(discord.ui.Modal):
             default=current_value or "",
             placeholder=placeholder,
             required=required,
-            max_length=200,
+            style=discord.TextStyle.paragraph if multiline else discord.TextStyle.short,
+            max_length=1000,
         )
         self.add_item(self.input)
 
@@ -281,21 +286,24 @@ class _CriminalEditView(discord.ui.View):
             ("defendant", "Defendant", data.get("defendant", ""), True, "Full name"),
             ("attorney", "Attorney", data.get("attorney", ""), False, "Defense attorney name"),
             ("filed_by", "Filed By", data.get("filed_by", ""), True, "Officer or DA"),
+            ("charges", "Charges", data.get("charges", ""), False, "One charge per line", True),
             ("hearing_date", "Hearing Date", data.get("hearing_date", ""), False, "e.g., July 20, 2026"),
         ]
 
         for i in range(0, len(fields), 3):
             row_fields = fields[i:i + 3]
-            for name, label, current, required, placeholder in row_fields:
+            for entry in row_fields:
+                name, label, current, required, placeholder = entry[:5]
+                multiline = entry[5] if len(entry) > 5 else False
                 btn = discord.ui.Button(
                     label=f"Edit {label}",
                     style=discord.ButtonStyle.secondary,
                     custom_id=f"dw_edit_cr_{case_id}_{name}",
                 )
-                btn.callback = self._make_callback(name, label, current, placeholder, required)
+                btn.callback = self._make_callback(name, label, current, placeholder, required, multiline)
                 self.add_item(btn)
 
-    def _make_callback(self, name, label, current, placeholder, required):
+    def _make_callback(self, name, label, current, placeholder, required, multiline=False):
         async def callback(interaction: discord.Interaction):
             can_edit = await _can_edit(interaction, self.cog, self.case_id)
             if not can_edit:
@@ -306,7 +314,7 @@ class _CriminalEditView(discord.ui.View):
                     ephemeral=True,
                 )
             else:
-                modal = _EditFieldModal(self.cog, self.case_id, name, label, current, placeholder, required)
+                modal = _EditFieldModal(self.cog, self.case_id, name, label, current, placeholder, required, multiline)
                 await interaction.response.send_modal(modal)
         return callback
 
@@ -315,13 +323,14 @@ class _CriminalEditView(discord.ui.View):
 
 
 class _DocketFieldModal(discord.ui.Modal):
-    def __init__(self, label, placeholder, required, callback_fn):
+    def __init__(self, label, placeholder, required, callback_fn, multiline=False):
         super().__init__(title=label)
         self.field = discord.ui.TextInput(
             label=label,
             placeholder=placeholder,
             required=required,
-            max_length=100,
+            style=discord.TextStyle.paragraph if multiline else discord.TextStyle.short,
+            max_length=1000,
         )
         self.add_item(self.field)
         self._callback = callback_fn
@@ -356,8 +365,8 @@ class _DocketCreateView(discord.ui.View):
 
     def _build_status_embed(self):
         lines = []
-        for f in ("case_number", "docket_title", "defendant", "attorney", "filed_by", "hearing_date"):
-            if f in ("case_number", "docket_title", "hearing_date"):
+        for f in ("case_number", "docket_title", "defendant", "attorney", "filed_by", "charges", "hearing_date"):
+            if f in ("case_number", "docket_title", "charges", "hearing_date"):
                 val = self.text.get(f) or "Not set"
             else:
                 members = self.selected.get(f, [])
@@ -385,14 +394,14 @@ class _DocketCreateView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
         return callback
 
-    def _add_text_button(self, field, label, placeholder, required, row):
+    def _add_text_button(self, field, label, placeholder, required, row, multiline=False):
         async def btn_callback(interaction):
             if interaction.user != self.user:
                 await interaction.response.send_message("This is not your docket form.", ephemeral=True)
                 return
             current = self.text.get(field, "")
             cb = await self._make_field_callback(field, label, placeholder, required)
-            modal = _DocketFieldModal(label, placeholder, required, cb)
+            modal = _DocketFieldModal(label, placeholder, required, cb, multiline)
             await interaction.response.send_modal(modal)
 
         btn = discord.ui.Button(
@@ -448,6 +457,7 @@ class _DocketCreateView(discord.ui.View):
             "defendant": str(defendants[0].id) if defendants else None,
             "attorney": str(attorneys[0].id) if attorneys else None,
             "filed_by": str(filed_by[0].id) if filed_by else None,
+            "charges": self.text.get("charges") or None,
             "hearing_date": self.text.get("hearing_date") or None,
             "created_at": ts_str,
             "created_by": interaction.user.id,
@@ -516,6 +526,7 @@ class _DocketWizardView(discord.ui.View):
         view = _DocketCreateView(self.cog, interaction.user)
         view._add_text_button("case_number", "Case Number", "e.g., CR-2026-001", True, 3)
         view._add_text_button("docket_title", "Docket Title", "e.g., State vs John Doe", True, 3)
+        view._add_text_button("charges", "Charges", "One charge per line", False, 4, multiline=True)
         view._add_text_button("hearing_date", "Hearing Date", "e.g., July 20, 2026", False, 4)
 
         btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, row=4)
