@@ -17,9 +17,14 @@ def _build_criminal_embed(case_id, data):
         f"**Case # :** {current_id}\n"
         f"**Defendant :** {_mention(data, 'defendant')}\n"
         f"**Attorney :** {_mention(data, 'attorney')}\n"
+        f"**Presiding Judge :** {_mention(data, 'presiding_judge')}\n"
+        f"**Prosecutor :** {_mention(data, 'prosecutor')}\n"
         f"**Filed By :** {_mention(data, 'filed_by')}\n"
-        f"**Filed At :** {data.get('created_at', 'N/A')}\n"
     )
+    witnesses = data.get("witnesses")
+    if witnesses:
+        desc += f"**Witnesses :** {' '.join(f'<@{uid}>' for uid in witnesses.split(','))}\n"
+    desc += f"**Filed At :** {data.get('created_at', 'N/A')}\n"
     charges = data.get("charges")
     if charges:
         bulleted = "\n".join(f"\u2022 {c.strip()}" for c in charges.split("\n") if c.strip())
@@ -182,7 +187,7 @@ class _EditFieldModal(discord.ui.Modal):
 
 
 
-PERSON_FIELDS_CRIMINAL = {"defendant", "attorney", "filed_by"}
+PERSON_FIELDS_CRIMINAL = {"defendant", "attorney", "filed_by", "presiding_judge", "prosecutor", "witnesses"}
 
 
 class _EditPersonSelect(discord.ui.UserSelect):
@@ -207,7 +212,7 @@ class _EditPersonView(discord.ui.View):
         self.field_name = field_name
         self.label = label
 
-        max_vals = 5 if field_name == "attorneys" else 1
+        max_vals = 5 if field_name in ("attorneys", "witnesses") else 1
         select = _EditPersonSelect(
             max_values=max_vals,
             custom_id=f"dw_edit_person_{case_id}_{field_name}",
@@ -221,7 +226,7 @@ class _EditPersonView(discord.ui.View):
             return
         await interaction.response.defer(ephemeral=True)
 
-        if self.field_name == "attorneys":
+        if self.field_name in ("attorneys", "witnesses"):
             value = ",".join(str(m.id) for m in selected)
             mentions = " ".join(m.mention for m in selected)
         else:
@@ -285,8 +290,11 @@ class _CriminalEditView(discord.ui.View):
             ("case_number", "Case Number", data.get("case_number", ""), True, "e.g., CR-2026-001"),
             ("docket_title", "Docket Title", data.get("docket_title", ""), True, "e.g., State vs John Doe"),
             ("defendant", "Defendant", data.get("defendant", ""), True, "Full name"),
-            ("attorney", "Attorney", data.get("attorney", ""), False, "Defense attorney name"),
+            ("presiding_judge", "Presiding Judge", data.get("presiding_judge", ""), True, "Full name"),
+            ("prosecutor", "Prosecutor", data.get("prosecutor", ""), True, "Full name"),
+            ("attorney", "Attorney", data.get("attorney", ""), False, "Defense attorney"),
             ("filed_by", "Filed By", data.get("filed_by", ""), True, "Officer or DA"),
+            ("witnesses", "Witnesses", data.get("witnesses", ""), False, "Witness names/IDs"),
             ("charges", "Charges", data.get("charges", ""), False, "One charge per line", True),
             ("hearing_date", "Hearing Date", data.get("hearing_date", ""), False, "e.g., July 20, 2026"),
         ]
@@ -349,7 +357,8 @@ class _DocketCreateView(discord.ui.View):
         self.text = {}
 
         self._add_select("defendant", "Select Defendant", 1, 1)
-        self._add_select("attorney", "Select Attorney (optional)", 0, 1)
+        self._add_select("presiding_judge", "Select Presiding Judge", 1, 1)
+        self._add_select("prosecutor", "Select Prosecutor", 1, 1)
         self._add_select("filed_by", "Select Officer or DA", 1, 1)
 
     def _add_select(self, field, placeholder, min_vals, max_vals):
@@ -366,9 +375,12 @@ class _DocketCreateView(discord.ui.View):
 
     def _build_status_embed(self):
         lines = []
-        for f in ("case_number", "docket_title", "defendant", "attorney", "filed_by", "charges", "hearing_date"):
+        for f in ("case_number", "docket_title", "defendant", "presiding_judge", "prosecutor", "filed_by", "attorney", "witnesses", "charges", "hearing_date"):
             if f in ("case_number", "docket_title", "charges", "hearing_date"):
                 val = self.text.get(f) or "Not set"
+            elif f in ("attorney", "witnesses"):
+                members = self.selected.get(f, [])
+                val = " ".join(m.mention for m in members) if members else "None"
             else:
                 members = self.selected.get(f, [])
                 val = members[0].mention if members else "Not set"
@@ -429,7 +441,7 @@ class _DocketCreateView(discord.ui.View):
                 await interaction.response.send_message(f"Case number `{case_id}` already exists.", ephemeral=True)
                 return
 
-        missing = [f for f in ("defendant", "filed_by") if f not in self.selected or not self.selected[f]]
+        missing = [f for f in ("defendant", "presiding_judge", "prosecutor", "filed_by") if f not in self.selected or not self.selected[f]]
         if missing:
             names = [f.replace("_", " ").title() for f in missing]
             await interaction.response.send_message(f"Please select: {', '.join(names)}", ephemeral=True)
@@ -449,15 +461,19 @@ class _DocketCreateView(discord.ui.View):
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         defendants = self.selected.get("defendant", [])
-        attorneys = self.selected.get("attorney", [])
+        judges = self.selected.get("presiding_judge", [])
+        prosecutors = self.selected.get("prosecutor", [])
         filed_by = self.selected.get("filed_by", [])
         case_data = {
             "type": "criminal",
             "case_number": case_id,
             "docket_title": self.text.get("docket_title", "Criminal Docket"),
             "defendant": str(defendants[0].id) if defendants else None,
-            "attorney": str(attorneys[0].id) if attorneys else None,
+            "attorney": self.text.get("attorney") or None,
+            "presiding_judge": str(judges[0].id) if judges else None,
+            "prosecutor": str(prosecutors[0].id) if prosecutors else None,
             "filed_by": str(filed_by[0].id) if filed_by else None,
+            "witnesses": self.text.get("witnesses") or None,
             "charges": self.text.get("charges") or None,
             "hearing_date": self.text.get("hearing_date") or None,
             "created_at": ts_str,
@@ -527,7 +543,9 @@ class _DocketWizardView(discord.ui.View):
         view = _DocketCreateView(self.cog, interaction.user)
         view._add_text_button("case_number", "Case Number", "e.g., CR-2026-001", True, 3)
         view._add_text_button("docket_title", "Docket Title", "e.g., State vs John Doe", True, 3)
-        view._add_text_button("charges", "Charges", "One charge per line", False, 4, multiline=True)
+        view._add_text_button("charges", "Charges", "One charge per line", False, 3, multiline=True)
+        view._add_text_button("attorney", "Attorney", "@mention or User ID", False, 4)
+        view._add_text_button("witnesses", "Witnesses", "Comma-separated @mentions or IDs", False, 4)
         view._add_text_button("hearing_date", "Hearing Date", "e.g., July 20, 2026", False, 4)
 
         btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, row=4)
