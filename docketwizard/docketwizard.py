@@ -12,8 +12,9 @@ def _mention(data, key):
 
 
 def _build_criminal_embed(case_id, data):
+    current_id = data.get("case_number", case_id)
     desc = (
-        f"**Case # :** {case_id}\n"
+        f"**Case # :** {current_id}\n"
         f"**Defendant :** {_mention(data, 'defendant')}\n"
         f"**Attorney :** {_mention(data, 'attorney')}\n"
         f"**Filed By :** {_mention(data, 'filed_by')}\n"
@@ -30,7 +31,7 @@ def _build_criminal_embed(case_id, data):
         description=desc.strip(),
         color=discord.Color.red(),
     )
-    embed.set_footer(text=f"Case #{case_id} \u2022 Criminal")
+    embed.set_footer(text=f"Case #{current_id} \u2022 Criminal")
     return embed
 
 
