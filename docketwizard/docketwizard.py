@@ -139,6 +139,16 @@ class _EditFieldModal(discord.ui.Modal):
         data["_case_id"] = self.case_id
         await _refresh_starter_message(interaction.guild, data)
 
+        if self.field_name == "docket_title":
+            thread_id = data.get("thread_id")
+            if thread_id:
+                thread = interaction.guild.get_channel(thread_id)
+                if thread:
+                    try:
+                        await thread.edit(name=self.input.value[:100])
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
         updated = self.input.value or "(none)"
         await interaction.edit_original_response(
             content=f"**{label}** updated to: {updated}"
