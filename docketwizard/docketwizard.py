@@ -5,34 +5,40 @@ from datetime import datetime
 
 
 def _build_criminal_embed(case_id, data):
+    desc = (
+        f"**Case # :** {case_id}\n"
+        f"**Defendant :** {data.get('defendant', 'N/A')}\n"
+        f"**Attorney :** {data.get('attorney') or 'None assigned'}\n"
+        f"**Filed By :** {data.get('filed_by', 'N/A')}\n"
+        f"**Filed At :** {data.get('created_at', 'N/A')}\n"
+    )
+    if data.get("hearing_date"):
+        desc += f"**Hearing Date :** {data['hearing_date']}\n"
     embed = discord.Embed(
         title=f"\u2696\ufe0f {data.get('docket_title', 'Criminal Docket')}",
+        description=desc.strip(),
         color=discord.Color.red(),
     )
-    embed.add_field(name="Case #", value=case_id, inline=True)
-    embed.add_field(name="Defendant", value=data.get("defendant", "N/A"), inline=True)
-    embed.add_field(name="Attorney", value=data.get("attorney") or "None assigned", inline=True)
-    embed.add_field(name="Filed By", value=data.get("filed_by", "N/A"), inline=True)
-    embed.add_field(name="Filed At", value=data.get("created_at", "N/A"), inline=True)
-    if data.get("hearing_date"):
-        embed.add_field(name="Hearing Date", value=data["hearing_date"], inline=False)
     embed.set_footer(text=f"Case #{case_id} \u2022 Criminal")
     return embed
 
 
 def _build_civil_embed(case_id, data):
+    desc = (
+        f"**Case # :** {case_id}\n"
+        f"**Plaintiff :** {data.get('plaintiff', 'N/A')}\n"
+        f"**Defendant :** {data.get('defendant', 'N/A')}\n"
+        f"**Attorneys :** {data.get('attorneys') or 'None assigned'}\n"
+        f"**Filed By :** {data.get('filed_by', 'N/A')}\n"
+        f"**Filed At :** {data.get('created_at', 'N/A')}\n"
+    )
+    if data.get("hearing_date"):
+        desc += f"**Hearing Date :** {data['hearing_date']}\n"
     embed = discord.Embed(
         title=f"\U0001f4cb {data.get('docket_title', 'Civil Docket')}",
+        description=desc.strip(),
         color=discord.Color.blue(),
     )
-    embed.add_field(name="Case #", value=case_id, inline=True)
-    embed.add_field(name="Plaintiff", value=data.get("plaintiff", "N/A"), inline=True)
-    embed.add_field(name="Defendant", value=data.get("defendant", "N/A"), inline=True)
-    embed.add_field(name="Attorneys", value=data.get("attorneys") or "None assigned", inline=True)
-    embed.add_field(name="Filed By", value=data.get("filed_by", "N/A"), inline=True)
-    embed.add_field(name="Filed At", value=data.get("created_at", "N/A"), inline=True)
-    if data.get("hearing_date"):
-        embed.add_field(name="Hearing Date", value=data["hearing_date"], inline=False)
     embed.set_footer(text=f"Case #{case_id} \u2022 Civil")
     return embed
 
@@ -271,16 +277,16 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
         required=True,
         max_length=100,
     )
-    attorney = discord.ui.TextInput(
-        label="Attorney",
-        placeholder="Name of defense attorney",
-        required=False,
-        max_length=100,
-    )
     filed_by = discord.ui.TextInput(
         label="Filed By",
         placeholder="Officer name or District Attorney",
         required=True,
+        max_length=100,
+    )
+    hearing_date = discord.ui.TextInput(
+        label="Hearing Date",
+        placeholder="e.g., July 20, 2026 at 9:00 AM",
+        required=False,
         max_length=100,
     )
 
@@ -322,9 +328,9 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
             "case_number": case_id,
             "docket_title": self.docket_title.value.strip(),
             "defendant": self.defendant.value.strip(),
-            "attorney": self.attorney.value.strip() or None,
+            "attorney": None,
             "filed_by": self.filed_by.value.strip(),
-            "hearing_date": None,
+            "hearing_date": self.hearing_date.value.strip() or None,
             "created_at": ts_str,
             "created_by": interaction.user.id,
         }
@@ -374,12 +380,6 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
         required=True,
         max_length=50,
     )
-    docket_title = discord.ui.TextInput(
-        label="Docket Title",
-        placeholder="e.g., Smith vs Jones",
-        required=True,
-        max_length=100,
-    )
     plaintiff = discord.ui.TextInput(
         label="Plaintiff",
         placeholder="Full name of the plaintiff",
@@ -396,6 +396,12 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
         label="Filed By",
         placeholder="Name of the filer",
         required=True,
+        max_length=100,
+    )
+    hearing_date = discord.ui.TextInput(
+        label="Hearing Date",
+        placeholder="e.g., July 20, 2026 at 9:00 AM",
+        required=False,
         max_length=100,
     )
 
@@ -432,21 +438,22 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
             )
             return
 
+        auto_title = f"{self.plaintiff.value.strip()} vs {self.defendant.value.strip()}"
         case_data = {
             "type": "civil",
             "case_number": case_id,
-            "docket_title": self.docket_title.value.strip(),
+            "docket_title": auto_title,
             "plaintiff": self.plaintiff.value.strip(),
             "defendant": self.defendant.value.strip(),
             "attorneys": None,
             "filed_by": self.filed_by.value.strip(),
-            "hearing_date": None,
+            "hearing_date": self.hearing_date.value.strip() or None,
             "created_at": ts_str,
             "created_by": interaction.user.id,
         }
 
         embed = _build_civil_embed(case_id, case_data)
-        thread_name = self.docket_title.value.strip()[:100]
+        thread_name = auto_title[:100]
 
         thread = await forum.create_thread(
             name=thread_name,
