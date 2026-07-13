@@ -402,6 +402,88 @@ class _CivilPeopleView(discord.ui.View):
         await interaction.edit_original_response(content=f"Docket thread created: {actual_thread.mention}")
 
 
+PERSON_FIELDS_CRIMINAL = {"defendant", "attorney", "filed_by"}
+PERSON_FIELDS_CIVIL = {"plaintiff", "defendant", "attorneys", "filed_by"}
+
+
+class _EditPersonSelect(discord.ui.UserSelect):
+    def __init__(self, max_values, custom_id, handle_cb):
+        super().__init__(
+            placeholder="Select a Discord member",
+            min_values=1,
+            max_values=max_values,
+            custom_id=custom_id,
+        )
+        self._handle_cb = handle_cb
+
+    async def callback(self, interaction: discord.Interaction):
+        await self._handle_cb(interaction, list(self.values))
+
+
+class _EditPersonView(discord.ui.View):
+    def __init__(self, cog, case_id, field_name, label):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.case_id = case_id
+        self.field_name = field_name
+        self.label = label
+
+        max_vals = 5 if field_name == "attorneys" else 1
+        select = _EditPersonSelect(
+            max_values=max_vals,
+            custom_id=f"dw_edit_person_{case_id}_{field_name}",
+            handle_cb=self._handle_select,
+        )
+        self.add_item(select)
+
+    async def _handle_select(self, interaction, selected):
+        can_edit = await _can_edit(interaction, self.cog, self.case_id)
+        if not can_edit:
+            return
+        await interaction.response.defer(ephemeral=True)
+
+        if self.field_name == "attorneys":
+            value = ",".join(str(m.id) for m in selected)
+            mentions = " ".join(m.mention for m in selected)
+        else:
+            value = str(selected[0].id)
+            mentions = selected[0].mention
+
+        async with self.cog.config.guild(interaction.guild).dockets() as dockets:
+            if self.case_id not in dockets:
+                await interaction.edit_original_response(content="Docket no longer exists.")
+                return
+            dockets[self.case_id][self.field_name] = value
+
+            if self.field_name in ("plaintiff", "defendant"):
+                p_id = dockets[self.case_id].get("plaintiff")
+                d_id = dockets[self.case_id].get("defendant")
+                if p_id and d_id:
+                    p = interaction.guild.get_member(int(p_id))
+                    d = interaction.guild.get_member(int(d_id))
+                    if p and d:
+                        new_title = f"{p.display_name} vs {d.display_name}"
+                        dockets[self.case_id]["docket_title"] = new_title
+
+        all_dockets = await self.cog.config.guild(interaction.guild).dockets()
+        data = all_dockets.get(self.case_id, {})
+        data["_case_id"] = self.case_id
+        await _refresh_starter_message(interaction.guild, data)
+
+        thread_id = data.get("thread_id")
+        if thread_id:
+            thread = interaction.guild.get_channel(thread_id)
+            if thread:
+                new_name = data.get("docket_title", "")
+                if new_name:
+                    try:
+                        await thread.edit(name=new_name[:100])
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
+        await interaction.edit_original_response(content=f"**{self.label}** updated to: {mentions}")
+
+
 class _CriminalEditView(discord.ui.View):
     def __init__(self, cog: "DocketWizard", case_id: str, data: dict):
         super().__init__(timeout=86400)
@@ -433,8 +515,14 @@ class _CriminalEditView(discord.ui.View):
             can_edit = await _can_edit(interaction, self.cog, self.case_id)
             if not can_edit:
                 return
-            modal = _EditFieldModal(self.cog, self.case_id, name, label, current, placeholder, required)
-            await interaction.response.send_modal(modal)
+            if name in PERSON_FIELDS_CRIMINAL:
+                await interaction.response.send_message(
+                    view=_EditPersonView(self.cog, self.case_id, name, label),
+                    ephemeral=True,
+                )
+            else:
+                modal = _EditFieldModal(self.cog, self.case_id, name, label, current, placeholder, required)
+                await interaction.response.send_modal(modal)
         return callback
 
 
@@ -470,8 +558,14 @@ class _CivilEditView(discord.ui.View):
             can_edit = await _can_edit(interaction, self.cog, self.case_id)
             if not can_edit:
                 return
-            modal = _EditFieldModal(self.cog, self.case_id, name, label, current, placeholder, required)
-            await interaction.response.send_modal(modal)
+            if name in PERSON_FIELDS_CIVIL:
+                await interaction.response.send_message(
+                    view=_EditPersonView(self.cog, self.case_id, name, label),
+                    ephemeral=True,
+                )
+            else:
+                modal = _EditFieldModal(self.cog, self.case_id, name, label, current, placeholder, required)
+                await interaction.response.send_modal(modal)
         return callback
 
 
