@@ -86,7 +86,7 @@ async def _refresh_starter_message(guild, data):
     if not thread_id or not starter_id or not case_id:
         return
 
-    thread = _get_thread(guild, thread_id)
+    thread = await _get_thread(guild, thread_id)
     if not thread:
         return
 
@@ -106,12 +106,22 @@ async def _refresh_starter_message(guild, data):
         pass
 
 
-def _get_thread(guild, thread_id):
-    thread = _get_thread(guild, thread_id)
+async def _get_thread(guild, thread_id):
+    thread = guild.get_channel(thread_id)
     if thread is None:
         try:
             thread = guild.get_thread(thread_id)
         except AttributeError:
+            pass
+    if thread is None:
+        try:
+            thread = guild.get_channel_or_thread(thread_id)
+        except AttributeError:
+            pass
+    if thread is None:
+        try:
+            thread = await guild.fetch_channel(thread_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
     return thread
 
@@ -123,7 +133,7 @@ async def _cleanup_stale_case(guild, cog, case_id):
         data = dockets[case_id]
         thread_id = data.get("thread_id")
         if thread_id:
-            thread = _get_thread(guild, thread_id)
+            thread = await _get_thread(guild, thread_id)
             if thread:
                 return False
         del dockets[case_id]
@@ -167,7 +177,7 @@ class _EditFieldModal(discord.ui.Modal):
         if self.field_name == "docket_title":
             thread_id = data.get("thread_id")
             if thread_id:
-                thread = _get_thread(interaction.guild, thread_id)
+                thread = await _get_thread(interaction.guild, thread_id)
                 if thread:
                     try:
                         await thread.edit(name=self.input.value[:100])
@@ -482,7 +492,7 @@ class _EditPersonView(discord.ui.View):
 
         thread_id = data.get("thread_id")
         if thread_id:
-            thread = _get_thread(interaction.guild, thread_id)
+            thread = await _get_thread(interaction.guild, thread_id)
             if thread:
                 new_name = data.get("docket_title", "")
                 if new_name:
@@ -832,7 +842,7 @@ class DocketWizard(commands.Cog):
                 data = dockets[case_id]
                 thread_id = data.get("thread_id")
                 if thread_id:
-                    thread = _get_thread(ctx.guild, thread_id)
+                    thread = await _get_thread(ctx.guild, thread_id)
                     if thread:
                         continue
                 del dockets[case_id]
