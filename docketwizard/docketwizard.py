@@ -338,27 +338,29 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
             content=f"**Case #{case_id}** \u2014 Criminal Docket filed by {interaction.user.mention}",
         )
 
+        actual_thread = thread.thread if hasattr(thread, 'thread') else thread
+
         try:
-            starter_msg = thread.starter_message
+            starter_msg = actual_thread.starter_message
             if starter_msg is None:
-                starter_msg = await thread.fetch_message(thread.id)
+                starter_msg = await actual_thread.fetch_message(actual_thread.id)
         except (discord.NotFound, discord.Forbidden):
             starter_msg = None
 
-        case_data["thread_id"] = thread.id
+        case_data["thread_id"] = actual_thread.id
         case_data["starter_message_id"] = starter_msg.id if starter_msg else None
 
         async with self.cog.config.guild(guild).dockets() as dockets:
             dockets[case_id] = case_data
 
         edit_view = _CriminalEditView(self.cog, case_id, case_data)
-        await thread.send(
+        await actual_thread.send(
             content=f"**Docket Actions** \u2014 Use the buttons below to edit this docket. Only {interaction.user.mention} or authorized roles can edit.",
             view=edit_view,
         )
 
         await interaction.edit_original_response(
-            content=f"Docket thread created: {thread.mention}"
+            content=f"Docket thread created: {actual_thread.mention}"
         )
         await interaction.followup.send(
             view=_NotifyView(self.cog, case_id), ephemeral=True
@@ -452,27 +454,29 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
             content=f"**Case #{case_id}** \u2014 Civil Docket filed by {interaction.user.mention}",
         )
 
+        actual_thread = thread.thread if hasattr(thread, 'thread') else thread
+
         try:
-            starter_msg = thread.starter_message
+            starter_msg = actual_thread.starter_message
             if starter_msg is None:
-                starter_msg = await thread.fetch_message(thread.id)
+                starter_msg = await actual_thread.fetch_message(actual_thread.id)
         except (discord.NotFound, discord.Forbidden):
             starter_msg = None
 
-        case_data["thread_id"] = thread.id
+        case_data["thread_id"] = actual_thread.id
         case_data["starter_message_id"] = starter_msg.id if starter_msg else None
 
         async with self.cog.config.guild(guild).dockets() as dockets:
             dockets[case_id] = case_data
 
         edit_view = _CivilEditView(self.cog, case_id, case_data)
-        await thread.send(
+        await actual_thread.send(
             content=f"**Docket Actions** \u2014 Use the buttons below to edit this docket. Only {interaction.user.mention} or authorized roles can edit.",
             view=edit_view,
         )
 
         await interaction.edit_original_response(
-            content=f"Docket thread created: {thread.mention}"
+            content=f"Docket thread created: {actual_thread.mention}"
         )
         await interaction.followup.send(
             view=_NotifyView(self.cog, case_id), ephemeral=True
