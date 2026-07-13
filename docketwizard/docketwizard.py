@@ -30,31 +30,6 @@ def _build_criminal_embed(case_id, data):
     return embed
 
 
-def _build_civil_embed(case_id, data):
-    desc = (
-        f"**Case # :** {case_id}\n"
-        f"**Plaintiff :** {_mention(data, 'plaintiff')}\n"
-        f"**Defendant :** {_mention(data, 'defendant')}\n"
-    )
-    attorneys = data.get("attorneys")
-    if attorneys:
-        desc += f"**Attorneys :** {' '.join(f'<@{uid}>' for uid in attorneys.split(','))}\n"
-    else:
-        desc += "**Attorneys :** None assigned\n"
-    desc += (
-        f"**Filed By :** {_mention(data, 'filed_by')}\n"
-        f"**Filed At :** {data.get('created_at', 'N/A')}\n"
-    )
-    if data.get("hearing_date"):
-        desc += f"**Hearing Date :** {data['hearing_date']}\n"
-    embed = discord.Embed(
-        title=f"\U0001f4cb {data.get('docket_title', 'Civil Docket')}",
-        description=desc.strip(),
-        color=discord.Color.blue(),
-    )
-    embed.set_footer(text=f"Case #{case_id} \u2022 Civil")
-    return embed
-
 
 async def _can_edit(interaction, cog, case_id):
     dockets = await cog.config.guild(interaction.guild).dockets()
@@ -95,10 +70,7 @@ async def _refresh_starter_message(guild, data):
     except (discord.NotFound, discord.Forbidden):
         return
 
-    if data.get("type") == "criminal":
-        new_embed = _build_criminal_embed(case_id, data)
-    else:
-        new_embed = _build_civil_embed(case_id, data)
+    new_embed = _build_criminal_embed(case_id, data)
 
     try:
         await msg.edit(embed=new_embed)
@@ -205,7 +177,6 @@ class _EditFieldModal(discord.ui.Modal):
 
 
 PERSON_FIELDS_CRIMINAL = {"defendant", "attorney", "filed_by"}
-PERSON_FIELDS_CIVIL = {"plaintiff", "defendant", "attorneys", "filed_by"}
 
 
 class _EditPersonSelect(discord.ui.UserSelect):
@@ -340,47 +311,7 @@ class _CriminalEditView(discord.ui.View):
         return callback
 
 
-class _CivilEditView(discord.ui.View):
-    def __init__(self, cog: "DocketWizard", case_id: str, data: dict):
-        super().__init__(timeout=86400)
-        self.cog = cog
-        self.case_id = case_id
 
-        fields = [
-            ("case_number", "Case Number", data.get("case_number", ""), True, "e.g., CV-2026-001"),
-            ("docket_title", "Docket Title", data.get("docket_title", ""), True, "e.g., Smith vs Jones"),
-            ("plaintiff", "Plaintiff", data.get("plaintiff", ""), True, "Full name"),
-            ("defendant", "Defendant", data.get("defendant", ""), True, "Full name"),
-            ("attorneys", "Attorneys", data.get("attorneys", ""), False, "Atty names"),
-            ("filed_by", "Filed By", data.get("filed_by", ""), True, "Name of filer"),
-            ("hearing_date", "Hearing Date", data.get("hearing_date", ""), False, "e.g., July 20, 2026"),
-        ]
-
-        for i in range(0, len(fields), 3):
-            row_fields = fields[i:i + 3]
-            for name, label, current, required, placeholder in row_fields:
-                btn = discord.ui.Button(
-                    label=f"Edit {label}",
-                    style=discord.ButtonStyle.secondary,
-                    custom_id=f"dw_edit_cv_{case_id}_{name}",
-                )
-                btn.callback = self._make_callback(name, label, current, placeholder, required)
-                self.add_item(btn)
-
-    def _make_callback(self, name, label, current, placeholder, required):
-        async def callback(interaction: discord.Interaction):
-            can_edit = await _can_edit(interaction, self.cog, self.case_id)
-            if not can_edit:
-                return
-            if name in PERSON_FIELDS_CIVIL:
-                await interaction.response.send_message(
-                    view=_EditPersonView(self.cog, self.case_id, name, label),
-                    ephemeral=True,
-                )
-            else:
-                modal = _EditFieldModal(self.cog, self.case_id, name, label, current, placeholder, required)
-                await interaction.response.send_modal(modal)
-        return callback
 
 
 class _DocketFieldModal(discord.ui.Modal):
@@ -400,23 +331,16 @@ class _DocketFieldModal(discord.ui.Modal):
 
 
 class _DocketCreateView(discord.ui.View):
-    def __init__(self, cog, case_type, user):
+    def __init__(self, cog, user):
         super().__init__(timeout=600)
         self.cog = cog
-        self.case_type = case_type
         self.user = user
-        self.selected = {}  # field_name -> list of discord.Member
-        self.text = {}  # field_name -> str
+        self.selected = {}
+        self.text = {}
 
-        if case_type == "criminal":
-            self._add_select("defendant", "Select Defendant", 1, 1)
-            self._add_select("attorney", "Select Attorney (optional)", 0, 1)
-            self._add_select("filed_by", "Select Officer or DA", 1, 1)
-        else:
-            self._add_select("plaintiff", "Select Plaintiff", 1, 1)
-            self._add_select("defendant", "Select Defendant", 1, 1)
-            self._add_select("attorneys", "Select Attorney(s) (optional)", 0, 5)
-            self._add_select("filed_by", "Select Filer", 1, 1)
+        self._add_select("defendant", "Select Defendant", 1, 1)
+        self._add_select("attorney", "Select Attorney (optional)", 0, 1)
+        self._add_select("filed_by", "Select Officer or DA", 1, 1)
 
     def _add_select(self, field, placeholder, min_vals, max_vals):
         sel = _DocketUserSelect(field, placeholder, min_vals, max_vals, self._on_select)
@@ -432,29 +356,18 @@ class _DocketCreateView(discord.ui.View):
 
     def _build_status_embed(self):
         lines = []
-        if self.case_type == "criminal":
-            fields_to_show = ["case_number", "docket_title", "defendant", "attorney", "filed_by", "hearing_date"]
-        else:
-            fields_to_show = ["case_number", "plaintiff", "defendant", "attorneys", "filed_by", "hearing_date"]
-
-        for f in fields_to_show:
+        for f in ("case_number", "docket_title", "defendant", "attorney", "filed_by", "hearing_date"):
             if f in ("case_number", "docket_title", "hearing_date"):
                 val = self.text.get(f) or "Not set"
-            elif f == "attorneys":
-                members = self.selected.get(f, [])
-                val = " ".join(m.mention for m in members) if members else "None"
             else:
                 members = self.selected.get(f, [])
                 val = members[0].mention if members else "Not set"
-            label = f.replace("_", " ").title()
-            lines.append(f"**{label}:** {val}")
+            lines.append(f"**{f.replace('_', ' ').title()}:** {val}")
 
-        color = discord.Color.red() if self.case_type == "criminal" else discord.Color.blue()
-        emoji = "\u2696\ufe0f" if self.case_type == "criminal" else "\U0001f4cb"
         embed = discord.Embed(
-            title=f"{emoji} New {self.case_type.title()} Docket",
+            title="\u2696\ufe0f New Criminal Docket",
             description="\n".join(lines),
-            color=color,
+            color=discord.Color.red(),
         )
         embed.set_footer(text="Fill in all fields, then click Create Docket")
         return embed
@@ -506,8 +419,7 @@ class _DocketCreateView(discord.ui.View):
                 await interaction.response.send_message(f"Case number `{case_id}` already exists.", ephemeral=True)
                 return
 
-        required_people = ["defendant", "filed_by"] if self.case_type == "criminal" else ["plaintiff", "defendant", "filed_by"]
-        missing = [f for f in required_people if f not in self.selected or not self.selected[f]]
+        missing = [f for f in ("defendant", "filed_by") if f not in self.selected or not self.selected[f]]
         if missing:
             names = [f.replace("_", " ").title() for f in missing]
             await interaction.response.send_message(f"Please select: {', '.join(names)}", ephemeral=True)
@@ -526,52 +438,28 @@ class _DocketCreateView(discord.ui.View):
 
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        if self.case_type == "criminal":
-            defendants = self.selected.get("defendant", [])
-            attorneys = self.selected.get("attorney", [])
-            filed_by = self.selected.get("filed_by", [])
-            case_data = {
-                "type": "criminal",
-                "case_number": case_id,
-                "docket_title": self.text.get("docket_title", "Criminal Docket"),
-                "defendant": str(defendants[0].id) if defendants else None,
-                "attorney": str(attorneys[0].id) if attorneys else None,
-                "filed_by": str(filed_by[0].id) if filed_by else None,
-                "hearing_date": self.text.get("hearing_date") or None,
-                "created_at": ts_str,
-                "created_by": interaction.user.id,
-            }
-            embed = _build_criminal_embed(case_id, case_data)
-            thread_name = case_data["docket_title"][:100]
-            edit_view = _CriminalEditView(self.cog, case_id, case_data)
-        else:
-            plaintiffs = self.selected.get("plaintiff", [])
-            defendants = self.selected.get("defendant", [])
-            attorneys = self.selected.get("attorneys", [])
-            filed_by = self.selected.get("filed_by", [])
-            p_name = plaintiffs[0].display_name if plaintiffs else "?"
-            d_name = defendants[0].display_name if defendants else "?"
-            auto_title = f"{p_name} vs {d_name}"
-            case_data = {
-                "type": "civil",
-                "case_number": case_id,
-                "docket_title": auto_title,
-                "plaintiff": str(plaintiffs[0].id) if plaintiffs else None,
-                "defendant": str(defendants[0].id) if defendants else None,
-                "attorneys": ",".join(str(m.id) for m in attorneys) if attorneys else None,
-                "filed_by": str(filed_by[0].id) if filed_by else None,
-                "hearing_date": self.text.get("hearing_date") or None,
-                "created_at": ts_str,
-                "created_by": interaction.user.id,
-            }
-            embed = _build_civil_embed(case_id, case_data)
-            thread_name = auto_title[:100]
-            edit_view = _CivilEditView(self.cog, case_id, case_data)
+        defendants = self.selected.get("defendant", [])
+        attorneys = self.selected.get("attorney", [])
+        filed_by = self.selected.get("filed_by", [])
+        case_data = {
+            "type": "criminal",
+            "case_number": case_id,
+            "docket_title": self.text.get("docket_title", "Criminal Docket"),
+            "defendant": str(defendants[0].id) if defendants else None,
+            "attorney": str(attorneys[0].id) if attorneys else None,
+            "filed_by": str(filed_by[0].id) if filed_by else None,
+            "hearing_date": self.text.get("hearing_date") or None,
+            "created_at": ts_str,
+            "created_by": interaction.user.id,
+        }
+        embed = _build_criminal_embed(case_id, case_data)
+        thread_name = case_data["docket_title"][:100]
+        edit_view = _CriminalEditView(self.cog, case_id, case_data)
 
         thread = await forum.create_thread(
             name=thread_name,
             embed=embed,
-            content=f"**Case #{case_id}** \u2014 {self.case_type.title()} Docket filed by {interaction.user.mention}",
+            content=f"**Case #{case_id}** \u2014 Criminal Docket filed by {interaction.user.mention}",
         )
 
         actual_thread = thread.thread if hasattr(thread, 'thread') else thread
@@ -625,30 +513,9 @@ class _DocketWizardView(discord.ui.View):
         emoji="\u2696\ufe0f",
     )
     async def criminal_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = _DocketCreateView(self.cog, "criminal", interaction.user)
+        view = _DocketCreateView(self.cog, interaction.user)
         view._add_text_button("case_number", "Case Number", "e.g., CR-2026-001", True, 3)
         view._add_text_button("docket_title", "Docket Title", "e.g., State vs John Doe", True, 3)
-        view._add_text_button("hearing_date", "Hearing Date", "e.g., July 20, 2026", False, 4)
-
-        btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, row=4)
-        btn.callback = view._create
-        view.add_item(btn)
-
-        await interaction.response.send_message(
-            embed=view._build_status_embed(),
-            view=view,
-            ephemeral=True,
-        )
-
-    @discord.ui.button(
-        label="Civil Docket",
-        style=discord.ButtonStyle.primary,
-        custom_id="docketwizard_civil",
-        emoji="\U0001f4cb",
-    )
-    async def civil_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = _DocketCreateView(self.cog, "civil", interaction.user)
-        view._add_text_button("case_number", "Case Number", "e.g., CV-2026-001", True, 4)
         view._add_text_button("hearing_date", "Hearing Date", "e.g., July 20, 2026", False, 4)
 
         btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, row=4)
