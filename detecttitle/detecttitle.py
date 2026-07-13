@@ -181,7 +181,7 @@ class DetectTitle(commands.Cog):
         embed.set_image(url=thumbnail)
         embed.set_footer(text="Twitch Stream Alert")
         
-        livestream_role = get(guild.roles, name="Livestreams")
+        livestream_role = get(guild.roles, name="livestreams")
         content = livestream_role.mention if livestream_role else ""
         try:
             return await channel.send(content=content, embed=embed)
