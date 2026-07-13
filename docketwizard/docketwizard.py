@@ -361,10 +361,42 @@ class _DocketCreateView(discord.ui.View):
         self.user = user
         self.selected = {}
         self.text = {}
+        self._page = 1
+        self._build_page()
 
-        self._add_select("defendant", "Select Defendant", 1, 1)
-        self._add_select("presiding_judge", "Select Presiding Judge", 1, 1)
-        self._add_select("prosecutor", "Select Prosecutor", 1, 1)
+    def _build_page(self):
+        self.clear_items()
+        if self._page == 1:
+            self._add_select("defendant", "Select Defendant", 1, 1)
+            self._add_select("attorney", "Select Attorney (optional)", 0, 1)
+            self._add_select("presiding_judge", "Select Presiding Judge", 1, 1)
+            self._add_select("prosecutor", "Select Prosecutor", 1, 1)
+            btn = discord.ui.Button(label="Next \u2192", style=discord.ButtonStyle.primary, row=4)
+            btn.callback = self._go_to_page(2)
+            self.add_item(btn)
+        else:
+            self._add_select("filed_by", "Select Officer or DA", 1, 1)
+            self._add_select("witnesses", "Select Witness(es) (optional)", 0, 5)
+            self._add_text_button("case_number", "Case Number", "e.g., CR-2026-001", True, 2)
+            self._add_text_button("docket_title", "Docket Title", "e.g., State vs John Doe", True, 2)
+            self._add_text_button("charges", "Charges", "One charge per line", False, 3, multiline=True)
+            self._add_text_button("hearing_date", "Hearing Date", "e.g., July 20, 2026", False, 3)
+            back = discord.ui.Button(label="\u2190 Back", style=discord.ButtonStyle.secondary, row=4)
+            back.callback = self._go_to_page(1)
+            self.add_item(back)
+            create = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, row=4)
+            create.callback = self._create
+            self.add_item(create)
+
+    def _go_to_page(self, page):
+        async def callback(interaction):
+            if interaction.user != self.user:
+                await interaction.response.send_message("This is not your docket form.", ephemeral=True)
+                return
+            self._page = page
+            self._build_page()
+            await interaction.response.edit_message(embed=self._build_status_embed(), view=self)
+        return callback
 
     def _add_select(self, field, placeholder, min_vals, max_vals):
         sel = _DocketUserSelect(field, placeholder, min_vals, max_vals, self._on_select)
@@ -380,10 +412,10 @@ class _DocketCreateView(discord.ui.View):
 
     def _build_status_embed(self):
         lines = []
-        for f in ("case_number", "docket_title", "defendant", "presiding_judge", "prosecutor", "filed_by", "attorney", "witnesses", "charges", "hearing_date"):
-            if f in ("case_number", "docket_title", "charges", "hearing_date", "filed_by"):
+        for f in ("case_number", "docket_title", "defendant", "attorney", "presiding_judge", "prosecutor", "filed_by", "witnesses", "charges", "hearing_date"):
+            if f in ("case_number", "docket_title", "charges", "hearing_date"):
                 val = self.text.get(f) or "Not set"
-            elif f in ("attorney", "witnesses"):
+            elif f == "witnesses":
                 members = self.selected.get(f, [])
                 val = " ".join(m.mention for m in members) if members else "None"
             else:
@@ -396,7 +428,7 @@ class _DocketCreateView(discord.ui.View):
             description="\n".join(lines),
             color=discord.Color.red(),
         )
-        embed.set_footer(text="Fill in all fields, then click Create Docket")
+        embed.set_footer(text=f"Page {self._page}/2 \u2014 Fill in all fields, then click Create Docket")
         return embed
 
     def _set_text(self, field, value):
@@ -446,11 +478,10 @@ class _DocketCreateView(discord.ui.View):
                 await interaction.response.send_message(f"Case number `{case_id}` already exists.", ephemeral=True)
                 return
 
-        missing_people = [f for f in ("defendant", "presiding_judge", "prosecutor") if f not in self.selected or not self.selected[f]]
-        if not self.text.get("filed_by", "").strip():
-            missing_people.append("Filed By")
-        if missing_people:
-            await interaction.response.send_message(f"Please select: {', '.join(missing_people)}", ephemeral=True)
+        missing = [f for f in ("defendant", "presiding_judge", "prosecutor", "filed_by") if f not in self.selected or not self.selected[f]]
+        if missing:
+            names = [f.replace("_", " ").title() for f in missing]
+            await interaction.response.send_message(f"Please select: {', '.join(names)}", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -467,19 +498,21 @@ class _DocketCreateView(discord.ui.View):
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         defendants = self.selected.get("defendant", [])
+        attys = self.selected.get("attorney", [])
         judges = self.selected.get("presiding_judge", [])
-        prosecutors = self.selected.get("prosecutor", [])
-        filed_by = self.text.get("filed_by", "").strip()
+        pros = self.selected.get("prosecutor", [])
+        filed_by = self.selected.get("filed_by", [])
+        witnesses = self.selected.get("witnesses", [])
         case_data = {
             "type": "criminal",
             "case_number": case_id,
             "docket_title": self.text.get("docket_title", "Criminal Docket"),
             "defendant": str(defendants[0].id) if defendants else None,
-            "attorney": self.text.get("attorney") or None,
+            "attorney": str(attys[0].id) if attys else None,
             "presiding_judge": str(judges[0].id) if judges else None,
-            "prosecutor": str(prosecutors[0].id) if prosecutors else None,
-            "filed_by": filed_by or None,
-            "witnesses": self.text.get("witnesses") or None,
+            "prosecutor": str(pros[0].id) if pros else None,
+            "filed_by": str(filed_by[0].id) if filed_by else None,
+            "witnesses": ",".join(str(m.id) for m in witnesses) if witnesses else None,
             "charges": self.text.get("charges") or None,
             "hearing_date": self.text.get("hearing_date") or None,
             "created_at": ts_str,
@@ -547,18 +580,6 @@ class _DocketWizardView(discord.ui.View):
     )
     async def criminal_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = _DocketCreateView(self.cog, interaction.user)
-        view._add_text_button("case_number", "Case Number", "e.g., CR-2026-001", True, 3)
-        view._add_text_button("docket_title", "Docket Title", "e.g., State vs John Doe", True, 3)
-        view._add_text_button("filed_by", "Filed By", "@mention or User ID", True, 3)
-        view._add_text_button("charges", "Charges", "One charge per line", False, 3, multiline=True)
-        view._add_text_button("attorney", "Attorney", "@mention or User ID", False, 4)
-        view._add_text_button("witnesses", "Witnesses", "Comma-separated @mentions or IDs", False, 4)
-        view._add_text_button("hearing_date", "Hearing Date", "e.g., July 20, 2026", False, 4)
-
-        btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, row=4)
-        btn.callback = view._create
-        view.add_item(btn)
-
         await interaction.response.send_message(
             embed=view._build_status_embed(),
             view=view,
