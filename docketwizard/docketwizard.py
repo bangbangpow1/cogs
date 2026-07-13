@@ -106,6 +106,20 @@ async def _refresh_starter_message(guild, data):
         pass
 
 
+async def _cleanup_stale_case(guild, cog, case_id):
+    async with cog.config.guild(guild).dockets() as dockets:
+        if case_id not in dockets:
+            return False
+        data = dockets[case_id]
+        thread_id = data.get("thread_id")
+        if thread_id:
+            thread = guild.get_channel(thread_id)
+            if thread:
+                return False
+        del dockets[case_id]
+        return True
+
+
 class _EditFieldModal(discord.ui.Modal):
     def __init__(self, cog, case_id, field_name, label, current_value, placeholder="", required=False):
         super().__init__(title=f"Edit {label}")
@@ -489,13 +503,13 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         guild = interaction.guild
 
-        existing = await self.cog.config.guild(guild).dockets()
-        if case_id in existing:
-            await interaction.response.send_message(
-                f"Case number `{case_id}` already exists. Please use a unique case number.",
-                ephemeral=True,
-            )
-            return
+        if case_id in await self.cog.config.guild(guild).dockets():
+            if not await _cleanup_stale_case(guild, self.cog, case_id):
+                await interaction.response.send_message(
+                    f"Case number `{case_id}` already exists. Please use a unique case number.",
+                    ephemeral=True,
+                )
+                return
 
         partial = {
             "case_number": case_id,
@@ -702,6 +716,23 @@ class DocketWizard(commands.Cog):
         await self.config.guild(ctx.guild).docket_creator_role_id.set(None)
         await self.config.guild(ctx.guild).dockets.set({})
         await ctx.send("DocketWizard has been removed from this guild.")
+
+    @dw.command(name="cleanup")
+    @commands.admin_or_permissions(administrator=True)
+    async def cleanup(self, ctx: commands.Context):
+        """Remove stale dockets whose forum threads no longer exist."""
+        cleaned = 0
+        async with self.config.guild(ctx.guild).dockets() as dockets:
+            for case_id in list(dockets.keys()):
+                data = dockets[case_id]
+                thread_id = data.get("thread_id")
+                if thread_id:
+                    thread = ctx.guild.get_channel(thread_id)
+                    if thread:
+                        continue
+                del dockets[case_id]
+                cleaned += 1
+        await ctx.send(f"Cleaned up {cleaned} stale docket(s).")
 
     @dw.command(name="list")
     async def list_dockets(self, ctx: commands.Context, case_type: str = None):
