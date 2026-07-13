@@ -181,8 +181,20 @@ class _EditFieldModal(discord.ui.Modal):
                 if thread:
                     try:
                         await thread.edit(name=self.input.value[:100])
-                    except (discord.Forbidden, discord.HTTPException):
-                        pass
+                    except discord.Forbidden:
+                        await interaction.followup.send(
+                            "I don't have permission to rename this thread (need Manage Threads).",
+                            ephemeral=True,
+                        )
+                    except discord.HTTPException as e:
+                        await interaction.followup.send(
+                            f"Couldn't rename the thread: {e}",
+                            ephemeral=True,
+                        )
+                else:
+                    await interaction.followup.send(
+                        "Couldn't find the thread to rename it.", ephemeral=True
+                    )
 
         updated = self.input.value or "(none)"
         await interaction.edit_original_response(
@@ -498,8 +510,20 @@ class _EditPersonView(discord.ui.View):
                 if new_name:
                     try:
                         await thread.edit(name=new_name[:100])
-                    except (discord.Forbidden, discord.HTTPException):
-                        pass
+                    except discord.Forbidden:
+                        await interaction.followup.send(
+                            "I don't have permission to rename this thread (need Manage Threads).",
+                            ephemeral=True,
+                        )
+                    except discord.HTTPException as e:
+                        await interaction.followup.send(
+                            f"Couldn't rename the thread: {e}",
+                            ephemeral=True,
+                        )
+            else:
+                await interaction.followup.send(
+                    "Couldn't find the thread to rename it.", ephemeral=True
+                )
 
         await interaction.edit_original_response(content=f"**{self.label}** updated to: {mentions}")
 
