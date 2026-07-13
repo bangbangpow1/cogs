@@ -356,8 +356,8 @@ class _DocketCreateView(discord.ui.View):
 
     def _build_status_embed(self):
         lines = []
-        for f in ("case_number", "docket_title", "defendant", "attorney", "filed_by", "hearing_date"):
-            if f in ("case_number", "docket_title", "hearing_date"):
+        for f in ("case_number", "docket_title", "defendant", "attorney", "filed_by"):
+            if f in ("case_number", "docket_title"):
                 val = self.text.get(f) or "Not set"
             else:
                 members = self.selected.get(f, [])
@@ -448,7 +448,6 @@ class _DocketCreateView(discord.ui.View):
             "defendant": str(defendants[0].id) if defendants else None,
             "attorney": str(attorneys[0].id) if attorneys else None,
             "filed_by": str(filed_by[0].id) if filed_by else None,
-            "hearing_date": self.text.get("hearing_date") or None,
             "created_at": ts_str,
             "created_by": interaction.user.id,
         }
@@ -516,8 +515,6 @@ class _DocketWizardView(discord.ui.View):
         view = _DocketCreateView(self.cog, interaction.user)
         view._add_text_button("case_number", "Case Number", "e.g., CR-2026-001", True, 3)
         view._add_text_button("docket_title", "Docket Title", "e.g., State vs John Doe", True, 3)
-        view._add_text_button("hearing_date", "Hearing Date", 'Paste a Discord @time timestamp or text', False, 4)
-
         btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, row=4)
         btn.callback = view._create
         view.add_item(btn)
