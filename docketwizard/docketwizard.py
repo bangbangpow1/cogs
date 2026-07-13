@@ -126,6 +126,7 @@ class _EditFieldModal(discord.ui.Modal):
         self.cog = cog
         self.case_id = case_id
         self.field_name = field_name
+        self.label = label
 
         self.input = discord.ui.TextInput(
             label=label,
@@ -165,7 +166,7 @@ class _EditFieldModal(discord.ui.Modal):
 
         updated = self.input.value or "(none)"
         await interaction.edit_original_response(
-            content=f"**{label}** updated to: {updated}"
+            content=f"**{self.label}** updated to: {updated}"
         )
 
 
