@@ -516,7 +516,7 @@ class _DocketWizardView(discord.ui.View):
         view = _DocketCreateView(self.cog, interaction.user)
         view._add_text_button("case_number", "Case Number", "e.g., CR-2026-001", True, 3)
         view._add_text_button("docket_title", "Docket Title", "e.g., State vs John Doe", True, 3)
-        view._add_text_button("hearing_date", "Hearing Date", "e.g., July 20, 2026", False, 4)
+        view._add_text_button("hearing_date", "Hearing Date", 'Paste a Discord @time timestamp or text', False, 4)
 
         btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, row=4)
         btn.callback = view._create
