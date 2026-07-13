@@ -4,12 +4,19 @@ from redbot.core.bot import Red
 from datetime import datetime
 
 
+def _mention(data, key):
+    uid = data.get(key)
+    if uid:
+        return f"<@{uid}>"
+    return "None assigned"
+
+
 def _build_criminal_embed(case_id, data):
     desc = (
         f"**Case # :** {case_id}\n"
-        f"**Defendant :** {data.get('defendant', 'N/A')}\n"
-        f"**Attorney :** {data.get('attorney') or 'None assigned'}\n"
-        f"**Filed By :** {data.get('filed_by', 'N/A')}\n"
+        f"**Defendant :** {_mention(data, 'defendant')}\n"
+        f"**Attorney :** {_mention(data, 'attorney')}\n"
+        f"**Filed By :** {_mention(data, 'filed_by')}\n"
         f"**Filed At :** {data.get('created_at', 'N/A')}\n"
     )
     if data.get("hearing_date"):
@@ -26,10 +33,16 @@ def _build_criminal_embed(case_id, data):
 def _build_civil_embed(case_id, data):
     desc = (
         f"**Case # :** {case_id}\n"
-        f"**Plaintiff :** {data.get('plaintiff', 'N/A')}\n"
-        f"**Defendant :** {data.get('defendant', 'N/A')}\n"
-        f"**Attorneys :** {data.get('attorneys') or 'None assigned'}\n"
-        f"**Filed By :** {data.get('filed_by', 'N/A')}\n"
+        f"**Plaintiff :** {_mention(data, 'plaintiff')}\n"
+        f"**Defendant :** {_mention(data, 'defendant')}\n"
+    )
+    attorneys = data.get("attorneys")
+    if attorneys:
+        desc += f"**Attorneys :** {' '.join(f'<@{uid}>' for uid in attorneys.split(','))}\n"
+    else:
+        desc += "**Attorneys :** None assigned\n"
+    desc += (
+        f"**Filed By :** {_mention(data, 'filed_by')}\n"
         f"**Filed At :** {data.get('created_at', 'N/A')}\n"
     )
     if data.get("hearing_date"):
@@ -185,6 +198,239 @@ class _NotifyView(discord.ui.View):
         await interaction.response.send_modal(_NotifyModal(self.cog, self.case_id))
 
 
+class _PeopleUserSelect(discord.ui.UserSelect):
+    def __init__(self, view_ref, field_name, **kwargs):
+        super().__init__(**kwargs)
+        self.view_ref = view_ref
+        self.field_name = field_name
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view_ref.selected[self.field_name] = [m for m in self.values]
+        await interaction.response.defer()
+
+
+class _CriminalPeopleView(discord.ui.View):
+    def __init__(self, cog, partial_data):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.partial = partial_data
+        self.selected = {}
+        cid = partial_data["case_number"]
+
+        self.add_item(_PeopleUserSelect(
+            self, "defendant",
+            placeholder="Select the Defendant",
+            min_values=1, max_values=1,
+            custom_id=f"dw_cr_people_def_{cid}",
+        ))
+        self.add_item(_PeopleUserSelect(
+            self, "attorney",
+            placeholder="Select the Attorney (optional)",
+            min_values=0, max_values=1,
+            custom_id=f"dw_cr_people_atty_{cid}",
+        ))
+        self.add_item(_PeopleUserSelect(
+            self, "filed_by",
+            placeholder="Select the Officer or DA",
+            min_values=1, max_values=1,
+            custom_id=f"dw_cr_people_filed_{cid}",
+        ))
+
+        btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, custom_id=f"dw_cr_create_{cid}")
+        btn.callback = self._create
+        self.add_item(btn)
+
+    async def _create(self, interaction: discord.Interaction):
+        if "defendant" not in self.selected or not self.selected["defendant"]:
+            await interaction.response.send_message("Please select a Defendant first.", ephemeral=True)
+            return
+        if "filed_by" not in self.selected or not self.selected["filed_by"]:
+            await interaction.response.send_message("Please select who filed the docket first.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        p = self.partial
+        sel = self.selected
+
+        case_id = p["case_number"]
+        ts_str = p["created_at"]
+
+        forum_id = await self.cog.config.guild(guild).forum_channel_id()
+        if not forum_id:
+            await interaction.edit_original_response(content="No forum channel set. Use `dw setforum`.")
+            return
+        forum = guild.get_channel(forum_id)
+        if not forum or not isinstance(forum, discord.ForumChannel):
+            await interaction.edit_original_response(content="Forum channel no longer available.")
+            return
+
+        def uid(member_list):
+            return str(member_list[0].id) if member_list else None
+
+        case_data = {
+            "type": "criminal",
+            "case_number": case_id,
+            "docket_title": p["docket_title"],
+            "defendant": uid(sel.get("defendant")),
+            "attorney": uid(sel.get("attorney")),
+            "filed_by": uid(sel.get("filed_by")),
+            "hearing_date": p.get("hearing_date"),
+            "created_at": ts_str,
+            "created_by": interaction.user.id,
+        }
+
+        embed = _build_criminal_embed(case_id, case_data)
+        thread_name = p["docket_title"][:100]
+
+        thread = await forum.create_thread(
+            name=thread_name,
+            embed=embed,
+            content=f"**Case #{case_id}** \u2014 Criminal Docket filed by {interaction.user.mention}",
+        )
+
+        actual_thread = thread.thread if hasattr(thread, 'thread') else thread
+        try:
+            starter_msg = actual_thread.starter_message
+            if starter_msg is None:
+                starter_msg = await actual_thread.fetch_message(actual_thread.id)
+        except (discord.NotFound, discord.Forbidden):
+            starter_msg = None
+
+        case_data["thread_id"] = actual_thread.id
+        case_data["starter_message_id"] = starter_msg.id if starter_msg else None
+
+        async with self.cog.config.guild(guild).dockets() as dockets:
+            dockets[case_id] = case_data
+
+        edit_view = _CriminalEditView(self.cog, case_id, case_data)
+        await actual_thread.send(
+            content=f"**Docket Actions** \u2014 Use the buttons below to edit this docket. Only {interaction.user.mention} or authorized roles can edit.",
+            view=edit_view,
+        )
+
+        await interaction.edit_original_response(content=f"Docket thread created: {actual_thread.mention}")
+        await interaction.followup.send(view=_NotifyView(self.cog, case_id), ephemeral=True)
+
+
+class _CivilPeopleView(discord.ui.View):
+    def __init__(self, cog, partial_data):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.partial = partial_data
+        self.selected = {}
+        cid = partial_data["case_number"]
+
+        self.add_item(_PeopleUserSelect(
+            self, "plaintiff",
+            placeholder="Select the Plaintiff",
+            min_values=1, max_values=1,
+            custom_id=f"dw_cv_people_pl_{cid}",
+        ))
+        self.add_item(_PeopleUserSelect(
+            self, "defendant",
+            placeholder="Select the Defendant",
+            min_values=1, max_values=1,
+            custom_id=f"dw_cv_people_def_{cid}",
+        ))
+        self.add_item(_PeopleUserSelect(
+            self, "attorneys",
+            placeholder="Select Attorney(s) (optional)",
+            min_values=0, max_values=5,
+            custom_id=f"dw_cv_people_atty_{cid}",
+        ))
+        self.add_item(_PeopleUserSelect(
+            self, "filed_by",
+            placeholder="Select who filed this case",
+            min_values=1, max_values=1,
+            custom_id=f"dw_cv_people_filed_{cid}",
+        ))
+
+        btn = discord.ui.Button(label="Create Docket", style=discord.ButtonStyle.success, custom_id=f"dw_cv_create_{cid}")
+        btn.callback = self._create
+        self.add_item(btn)
+
+    async def _create(self, interaction: discord.Interaction):
+        if "plaintiff" not in self.selected or not self.selected["plaintiff"]:
+            await interaction.response.send_message("Please select a Plaintiff first.", ephemeral=True)
+            return
+        if "defendant" not in self.selected or not self.selected["defendant"]:
+            await interaction.response.send_message("Please select a Defendant first.", ephemeral=True)
+            return
+        if "filed_by" not in self.selected or not self.selected["filed_by"]:
+            await interaction.response.send_message("Please select who filed the docket first.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        p = self.partial
+        sel = self.selected
+
+        case_id = p["case_number"]
+        ts_str = p["created_at"]
+
+        forum_id = await self.cog.config.guild(guild).forum_channel_id()
+        if not forum_id:
+            await interaction.edit_original_response(content="No forum channel set. Use `dw setforum`.")
+            return
+        forum = guild.get_channel(forum_id)
+        if not forum or not isinstance(forum, discord.ForumChannel):
+            await interaction.edit_original_response(content="Forum channel no longer available.")
+            return
+
+        plaintiff_id = str(sel["plaintiff"][0].id)
+        defendant_id = str(sel["defendant"][0].id)
+        filed_by_id = str(sel["filed_by"][0].id)
+        atty_ids = ",".join(str(m.id) for m in sel.get("attorneys", []))
+
+        auto_title = f"{sel['plaintiff'][0].display_name} vs {sel['defendant'][0].display_name}"
+
+        case_data = {
+            "type": "civil",
+            "case_number": case_id,
+            "docket_title": p.get("docket_title") or auto_title,
+            "plaintiff": plaintiff_id,
+            "defendant": defendant_id,
+            "attorneys": atty_ids or None,
+            "filed_by": filed_by_id,
+            "hearing_date": p.get("hearing_date"),
+            "created_at": ts_str,
+            "created_by": interaction.user.id,
+        }
+
+        embed = _build_civil_embed(case_id, case_data)
+        thread_name = (p.get("docket_title") or auto_title)[:100]
+
+        thread = await forum.create_thread(
+            name=thread_name,
+            embed=embed,
+            content=f"**Case #{case_id}** \u2014 Civil Docket filed by {interaction.user.mention}",
+        )
+
+        actual_thread = thread.thread if hasattr(thread, 'thread') else thread
+        try:
+            starter_msg = actual_thread.starter_message
+            if starter_msg is None:
+                starter_msg = await actual_thread.fetch_message(actual_thread.id)
+        except (discord.NotFound, discord.Forbidden):
+            starter_msg = None
+
+        case_data["thread_id"] = actual_thread.id
+        case_data["starter_message_id"] = starter_msg.id if starter_msg else None
+
+        async with self.cog.config.guild(guild).dockets() as dockets:
+            dockets[case_id] = case_data
+
+        edit_view = _CivilEditView(self.cog, case_id, case_data)
+        await actual_thread.send(
+            content=f"**Docket Actions** \u2014 Use the buttons below to edit this docket. Only {interaction.user.mention} or authorized roles can edit.",
+            view=edit_view,
+        )
+
+        await interaction.edit_original_response(content=f"Docket thread created: {actual_thread.mention}")
+        await interaction.followup.send(view=_NotifyView(self.cog, case_id), ephemeral=True)
+
+
 class _CriminalEditView(discord.ui.View):
     def __init__(self, cog: "DocketWizard", case_id: str, data: dict):
         super().__init__(timeout=86400)
@@ -271,18 +517,6 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
         required=True,
         max_length=100,
     )
-    defendant = discord.ui.TextInput(
-        label="Defendant",
-        placeholder="Full name of the defendant",
-        required=True,
-        max_length=100,
-    )
-    filed_by = discord.ui.TextInput(
-        label="Filed By",
-        placeholder="Officer name or District Attorney",
-        required=True,
-        max_length=100,
-    )
     hearing_date = discord.ui.TextInput(
         label="Hearing Date",
         placeholder="e.g., July 20, 2026 at 9:00 AM",
@@ -296,80 +530,28 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
 
     async def on_submit(self, interaction: discord.Interaction):
         case_id = self.case_number.value.strip().upper()
-        timestamp = datetime.now()
-        ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         guild = interaction.guild
-
-        await interaction.response.defer(ephemeral=True)
 
         existing = await self.cog.config.guild(guild).dockets()
         if case_id in existing:
-            await interaction.edit_original_response(
-                content=f"Case number `{case_id}` already exists. Please use a unique case number."
+            await interaction.response.send_message(
+                f"Case number `{case_id}` already exists. Please use a unique case number.",
+                ephemeral=True,
             )
             return
 
-        forum_id = await self.cog.config.guild(guild).forum_channel_id()
-        if not forum_id:
-            await interaction.edit_original_response(
-                content="No forum channel has been set. Use `dw setforum <forum>` first."
-            )
-            return
-
-        forum = guild.get_channel(forum_id)
-        if not forum or not isinstance(forum, discord.ForumChannel):
-            await interaction.edit_original_response(
-                content="The configured forum channel is no longer available."
-            )
-            return
-
-        case_data = {
-            "type": "criminal",
+        partial = {
             "case_number": case_id,
             "docket_title": self.docket_title.value.strip(),
-            "defendant": self.defendant.value.strip(),
-            "attorney": None,
-            "filed_by": self.filed_by.value.strip(),
             "hearing_date": self.hearing_date.value.strip() or None,
             "created_at": ts_str,
-            "created_by": interaction.user.id,
         }
 
-        embed = _build_criminal_embed(case_id, case_data)
-        thread_name = self.docket_title.value.strip()[:100]
-
-        thread = await forum.create_thread(
-            name=thread_name,
-            embed=embed,
-            content=f"**Case #{case_id}** \u2014 Criminal Docket filed by {interaction.user.mention}",
-        )
-
-        actual_thread = thread.thread if hasattr(thread, 'thread') else thread
-
-        try:
-            starter_msg = actual_thread.starter_message
-            if starter_msg is None:
-                starter_msg = await actual_thread.fetch_message(actual_thread.id)
-        except (discord.NotFound, discord.Forbidden):
-            starter_msg = None
-
-        case_data["thread_id"] = actual_thread.id
-        case_data["starter_message_id"] = starter_msg.id if starter_msg else None
-
-        async with self.cog.config.guild(guild).dockets() as dockets:
-            dockets[case_id] = case_data
-
-        edit_view = _CriminalEditView(self.cog, case_id, case_data)
-        await actual_thread.send(
-            content=f"**Docket Actions** \u2014 Use the buttons below to edit this docket. Only {interaction.user.mention} or authorized roles can edit.",
-            view=edit_view,
-        )
-
-        await interaction.edit_original_response(
-            content=f"Docket thread created: {actual_thread.mention}"
-        )
-        await interaction.followup.send(
-            view=_NotifyView(self.cog, case_id), ephemeral=True
+        await interaction.response.send_message(
+            "**Step 2:** Select the people involved in this docket from the dropdowns below, then click **Create Docket**.",
+            view=_CriminalPeopleView(self.cog, partial),
+            ephemeral=True,
         )
 
 
@@ -380,24 +562,6 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
         required=True,
         max_length=50,
     )
-    plaintiff = discord.ui.TextInput(
-        label="Plaintiff",
-        placeholder="Full name of the plaintiff",
-        required=True,
-        max_length=100,
-    )
-    defendant = discord.ui.TextInput(
-        label="Defendant",
-        placeholder="Full name of the defendant",
-        required=True,
-        max_length=100,
-    )
-    filed_by = discord.ui.TextInput(
-        label="Filed By",
-        placeholder="Name of the filer",
-        required=True,
-        max_length=100,
-    )
     hearing_date = discord.ui.TextInput(
         label="Hearing Date",
         placeholder="e.g., July 20, 2026 at 9:00 AM",
@@ -411,82 +575,28 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
 
     async def on_submit(self, interaction: discord.Interaction):
         case_id = self.case_number.value.strip().upper()
-        timestamp = datetime.now()
-        ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         guild = interaction.guild
-
-        await interaction.response.defer(ephemeral=True)
 
         existing = await self.cog.config.guild(guild).dockets()
         if case_id in existing:
-            await interaction.edit_original_response(
-                content=f"Case number `{case_id}` already exists. Please use a unique case number."
+            await interaction.response.send_message(
+                f"Case number `{case_id}` already exists. Please use a unique case number.",
+                ephemeral=True,
             )
             return
 
-        forum_id = await self.cog.config.guild(guild).forum_channel_id()
-        if not forum_id:
-            await interaction.edit_original_response(
-                content="No forum channel has been set. Use `dw setforum <forum>` first."
-            )
-            return
-
-        forum = guild.get_channel(forum_id)
-        if not forum or not isinstance(forum, discord.ForumChannel):
-            await interaction.edit_original_response(
-                content="The configured forum channel is no longer available."
-            )
-            return
-
-        auto_title = f"{self.plaintiff.value.strip()} vs {self.defendant.value.strip()}"
-        case_data = {
-            "type": "civil",
+        partial = {
             "case_number": case_id,
-            "docket_title": auto_title,
-            "plaintiff": self.plaintiff.value.strip(),
-            "defendant": self.defendant.value.strip(),
-            "attorneys": None,
-            "filed_by": self.filed_by.value.strip(),
+            "docket_title": None,
             "hearing_date": self.hearing_date.value.strip() or None,
             "created_at": ts_str,
-            "created_by": interaction.user.id,
         }
 
-        embed = _build_civil_embed(case_id, case_data)
-        thread_name = auto_title[:100]
-
-        thread = await forum.create_thread(
-            name=thread_name,
-            embed=embed,
-            content=f"**Case #{case_id}** \u2014 Civil Docket filed by {interaction.user.mention}",
-        )
-
-        actual_thread = thread.thread if hasattr(thread, 'thread') else thread
-
-        try:
-            starter_msg = actual_thread.starter_message
-            if starter_msg is None:
-                starter_msg = await actual_thread.fetch_message(actual_thread.id)
-        except (discord.NotFound, discord.Forbidden):
-            starter_msg = None
-
-        case_data["thread_id"] = actual_thread.id
-        case_data["starter_message_id"] = starter_msg.id if starter_msg else None
-
-        async with self.cog.config.guild(guild).dockets() as dockets:
-            dockets[case_id] = case_data
-
-        edit_view = _CivilEditView(self.cog, case_id, case_data)
-        await actual_thread.send(
-            content=f"**Docket Actions** \u2014 Use the buttons below to edit this docket. Only {interaction.user.mention} or authorized roles can edit.",
-            view=edit_view,
-        )
-
-        await interaction.edit_original_response(
-            content=f"Docket thread created: {actual_thread.mention}"
-        )
-        await interaction.followup.send(
-            view=_NotifyView(self.cog, case_id), ephemeral=True
+        await interaction.response.send_message(
+            "**Step 2:** Select the people involved in this docket from the dropdowns below, then click **Create Docket**.",
+            view=_CivilPeopleView(self.cog, partial),
+            ephemeral=True,
         )
 
 
