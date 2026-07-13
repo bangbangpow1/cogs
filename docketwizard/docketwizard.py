@@ -15,6 +15,7 @@ class DocketWizard(commands.Cog):
         default_guild = {
             "channel_id": None,
             "setup_message_id": None,
+            "forum_channel_id": None,
             "dockets": {},
         }
         self.config.register_guild(**default_guild)
@@ -52,8 +53,16 @@ class DocketWizard(commands.Cog):
 
     @dw.command(name="setup")
     @commands.admin_or_permissions(administrator=True)
-    async def setup(self, ctx: commands.Context, channel: discord.TextChannel):
-        """Set up the docket wizard in a channel."""
+    async def setup(self, ctx: commands.Context, channel: discord.TextChannel, forum_channel: discord.ForumChannel = None):
+        """Set up the docket wizard in a channel.
+
+        Parameters:
+        -----------
+        channel : discord.TextChannel
+            The channel where the docket buttons will appear.
+        forum_channel : discord.ForumChannel
+            The forum channel where docket threads will be created (can be set later with `setforum`).
+        """
         view = _DocketWizardView(self)
         embed = discord.Embed(
             title="\u2696\ufe0f DocketWizard",
@@ -64,8 +73,20 @@ class DocketWizard(commands.Cog):
 
         await self.config.guild(ctx.guild).channel_id.set(channel.id)
         await self.config.guild(ctx.guild).setup_message_id.set(msg.id)
+        if forum_channel:
+            await self.config.guild(ctx.guild).forum_channel_id.set(forum_channel.id)
 
-        await ctx.send(f"DocketWizard has been set up in {channel.mention}")
+        if forum_channel:
+            await ctx.send(f"DocketWizard has been set up in {channel.mention}. Docket threads will be created in {forum_channel.mention}.")
+        else:
+            await ctx.send(f"DocketWizard has been set up in {channel.mention}. Use `{ctx.prefix}dw setforum <forum>` to set a forum for docket threads.")
+
+    @dw.command(name="setforum")
+    @commands.admin_or_permissions(administrator=True)
+    async def setforum(self, ctx: commands.Context, forum_channel: discord.ForumChannel):
+        """Set the forum channel where docket threads will be created."""
+        await self.config.guild(ctx.guild).forum_channel_id.set(forum_channel.id)
+        await ctx.send(f"Docket threads will now be created in {forum_channel.mention}.")
 
     @dw.command(name="remove")
     @commands.admin_or_permissions(administrator=True)
@@ -85,6 +106,7 @@ class DocketWizard(commands.Cog):
 
         await self.config.guild(ctx.guild).channel_id.set(None)
         await self.config.guild(ctx.guild).setup_message_id.set(None)
+        await self.config.guild(ctx.guild).forum_channel_id.set(None)
         await self.config.guild(ctx.guild).dockets.set({})
         await ctx.send("DocketWizard has been removed from this guild.")
 
@@ -266,6 +288,25 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
         case_id = str(uuid.uuid4())[:8].upper()
         timestamp = datetime.now()
         ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        guild = interaction.guild
+
+        await interaction.response.send_message("Creating docket thread...", ephemeral=True)
+
+        forum_id = await self.cog.config.guild(guild).forum_channel_id()
+        if not forum_id:
+            await interaction.followup.send(
+                "No forum channel has been set. Use `dw setforum <forum>` first.",
+                ephemeral=True,
+            )
+            return
+
+        forum = guild.get_channel(forum_id)
+        if not forum or not isinstance(forum, discord.ForumChannel):
+            await interaction.followup.send(
+                "The configured forum channel is no longer available.",
+                ephemeral=True,
+            )
+            return
 
         embed = discord.Embed(
             title=f"\u2696\ufe0f Criminal Docket #{case_id}",
@@ -281,7 +322,17 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
 
         embed.set_footer(text=f"Case #{case_id} \u2022 Criminal")
 
-        await interaction.response.send_message(embed=embed)
+        thread_name = f"State vs {self.defendant.value}"
+        thread = await forum.create_thread(
+            name=thread_name[:100],
+            embed=embed,
+            content=f"**Case #{case_id}** — Criminal Docket filed by {interaction.user.mention}",
+        )
+
+        await interaction.edit_original_response(
+            content=f"Docket thread created: {thread.thread.mention}"
+        )
+
         await interaction.followup.send(
             view=_NotifyView(self.cog, case_id), ephemeral=True
         )
@@ -294,8 +345,9 @@ class _CriminalDocketModal(discord.ui.Modal, title="New Criminal Docket"):
             "hearing_date": self.hearing_date.value or None,
             "created_at": ts_str,
             "created_by": interaction.user.id,
+            "thread_id": thread.thread.id,
         }
-        async with self.cog.config.guild(interaction.guild).dockets() as dockets:
+        async with self.cog.config.guild(guild).dockets() as dockets:
             dockets[case_id] = case_data
 
 
@@ -339,6 +391,25 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
         case_id = str(uuid.uuid4())[:8].upper()
         timestamp = datetime.now()
         ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        guild = interaction.guild
+
+        await interaction.response.send_message("Creating docket thread...", ephemeral=True)
+
+        forum_id = await self.cog.config.guild(guild).forum_channel_id()
+        if not forum_id:
+            await interaction.followup.send(
+                "No forum channel has been set. Use `dw setforum <forum>` first.",
+                ephemeral=True,
+            )
+            return
+
+        forum = guild.get_channel(forum_id)
+        if not forum or not isinstance(forum, discord.ForumChannel):
+            await interaction.followup.send(
+                "The configured forum channel is no longer available.",
+                ephemeral=True,
+            )
+            return
 
         embed = discord.Embed(
             title=f"\U0001f4cb Civil Docket #{case_id}",
@@ -355,7 +426,17 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
 
         embed.set_footer(text=f"Case #{case_id} \u2022 Civil")
 
-        await interaction.response.send_message(embed=embed)
+        thread_name = f"{self.plaintiff.value} vs {self.defendant.value}"
+        thread = await forum.create_thread(
+            name=thread_name[:100],
+            embed=embed,
+            content=f"**Case #{case_id}** — Civil Docket filed by {interaction.user.mention}",
+        )
+
+        await interaction.edit_original_response(
+            content=f"Docket thread created: {thread.thread.mention}"
+        )
+
         await interaction.followup.send(
             view=_NotifyView(self.cog, case_id), ephemeral=True
         )
@@ -369,8 +450,9 @@ class _CivilDocketModal(discord.ui.Modal, title="New Civil Docket"):
             "hearing_date": self.hearing_date.value or None,
             "created_at": ts_str,
             "created_by": interaction.user.id,
+            "thread_id": thread.thread.id,
         }
-        async with self.cog.config.guild(interaction.guild).dockets() as dockets:
+        async with self.cog.config.guild(guild).dockets() as dockets:
             dockets[case_id] = case_data
 
 
