@@ -281,7 +281,7 @@ class _CriminalEditView(discord.ui.View):
             ("defendant", "Defendant", data.get("defendant", ""), True, "Full name"),
             ("attorney", "Attorney", data.get("attorney", ""), False, "Defense attorney name"),
             ("filed_by", "Filed By", data.get("filed_by", ""), True, "Officer or DA"),
-            ("hearing_date", "Hearing Date", data.get("hearing_date", ""), False, "Use @time in chat, then !dw hearing"),
+            ("hearing_date", "Hearing Date", data.get("hearing_date", ""), False, "e.g., July 20, 2026"),
         ]
 
         for i in range(0, len(fields), 3):
@@ -303,12 +303,6 @@ class _CriminalEditView(discord.ui.View):
             if name in PERSON_FIELDS_CRIMINAL:
                 await interaction.response.send_message(
                     view=_EditPersonView(self.cog, self.case_id, name, label),
-                    ephemeral=True,
-                )
-            elif name == "hearing_date":
-                await interaction.response.send_message(
-                    f"Use **`!dw hearing {self.case_id} <date>`** in chat to set the hearing date.\n"
-                    f"Tip: Type `@time` in chat to pick a date \u2014 it generates a clickable timestamp.",
                     ephemeral=True,
                 )
             else:
