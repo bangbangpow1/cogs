@@ -155,58 +155,6 @@ class _EditFieldModal(discord.ui.Modal):
         )
 
 
-class _NotifyModal(discord.ui.Modal, title="Notify Users"):
-    user_ids = discord.ui.TextInput(
-        label="Discord User IDs",
-        placeholder="Comma-separated user IDs (right-click user > Copy ID)",
-        required=True,
-        max_length=200,
-    )
-
-    def __init__(self, cog: "DocketWizard", case_id: str):
-        super().__init__()
-        self.cog = cog
-        self.case_id = case_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        ids = [
-            id.strip()
-            for id in self.user_ids.value.replace(",", " ").split()
-            if id.strip().isdigit()
-        ]
-        if not ids:
-            await interaction.response.send_message("No valid user IDs provided.", ephemeral=True)
-            return
-
-        mentions = " ".join(f"<@{uid}>" for uid in ids)
-        embed = discord.Embed(
-            title=f"\U0001f514 Notification for Case #{self.case_id}",
-            color=discord.Color.green(),
-        )
-        await interaction.response.send_message(embed=embed)
-        await interaction.followup.send(
-            f"{mentions} \u2014 You have been notified regarding case **#{self.case_id}**."
-        )
-
-
-class _NotifyView(discord.ui.View):
-    def __init__(self, cog: "DocketWizard", case_id: str):
-        super().__init__(timeout=300)
-        self.cog = cog
-        self.case_id = case_id
-
-        button = discord.ui.Button(
-            label="Notify Users",
-            style=discord.ButtonStyle.secondary,
-            custom_id=f"docketwizard_notify_{case_id}",
-            emoji="\U0001f514",
-        )
-        button.callback = self._notify_callback
-        self.add_item(button)
-
-    async def _notify_callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(_NotifyModal(self.cog, self.case_id))
-
 
 class _PeopleUserSelect(discord.ui.UserSelect):
     def __init__(self, view_ref, field_name, **kwargs):
@@ -320,7 +268,6 @@ class _CriminalPeopleView(discord.ui.View):
         )
 
         await interaction.edit_original_response(content=f"Docket thread created: {actual_thread.mention}")
-        await interaction.followup.send(view=_NotifyView(self.cog, case_id), ephemeral=True)
 
 
 class _CivilPeopleView(discord.ui.View):
@@ -438,7 +385,6 @@ class _CivilPeopleView(discord.ui.View):
         )
 
         await interaction.edit_original_response(content=f"Docket thread created: {actual_thread.mention}")
-        await interaction.followup.send(view=_NotifyView(self.cog, case_id), ephemeral=True)
 
 
 class _CriminalEditView(discord.ui.View):
@@ -829,24 +775,4 @@ class DocketWizard(commands.Cog):
         await _refresh_starter_message(ctx.guild, data)
         await ctx.send(f"Hearing date for case **{case_id}** set to: {hearing_date}")
 
-    @dw.command(name="notify")
-    async def notify(self, ctx: commands.Context, case_id: str, users: commands.Greedy[discord.Member]):
-        """Notify users about a docket. Example: [p]dw notify CR-2026-001 @user1 @user2"""
-        dockets = await self.config.guild(ctx.guild).dockets()
-        case_id = case_id.upper()
-        if case_id not in dockets:
-            await ctx.send(f"No docket found with ID `{case_id}`.")
-            return
 
-        if not users:
-            await ctx.send("Please specify at least one user to notify.")
-            return
-
-        mentions = " ".join(u.mention for u in users)
-        embed = discord.Embed(
-            title=f"\U0001f514 Notification for Case {case_id}",
-            description=f"You have been notified regarding a {dockets[case_id]['type']} docket.",
-            color=discord.Color.green(),
-        )
-        await ctx.send(embed=embed)
-        await ctx.send(mentions)
