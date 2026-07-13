@@ -746,21 +746,25 @@ class _SetupView(discord.ui.View):
             await interaction.response.send_message("Please select both a text channel and a forum channel.", ephemeral=True)
             return
 
+        guild = interaction.guild
+        channel = guild.get_channel(self.text_channel.id) or self.text_channel
+        forum = guild.get_channel(self.forum_channel.id) or self.forum_channel
+
         view = _DocketWizardView(self.cog)
         embed = discord.Embed(
             title="\u2696\ufe0f DocketWizard",
             description="Click a button below to create a new docket entry.",
             color=discord.Color.gold(),
         )
-        msg = await self.text_channel.send(embed=embed, view=view)
-        await self.cog.config.guild(interaction.guild).channel_id.set(self.text_channel.id)
-        await self.cog.config.guild(interaction.guild).setup_message_id.set(msg.id)
-        await self.cog.config.guild(interaction.guild).forum_channel_id.set(self.forum_channel.id)
+        msg = await channel.send(embed=embed, view=view)
+        await self.cog.config.guild(guild).channel_id.set(channel.id)
+        await self.cog.config.guild(guild).setup_message_id.set(msg.id)
+        await self.cog.config.guild(guild).forum_channel_id.set(forum.id)
         if self.role:
-            await self.cog.config.guild(interaction.guild).docket_creator_role_id.set(self.role.id)
+            await self.cog.config.guild(guild).docket_creator_role_id.set(self.role.id)
 
         await interaction.response.edit_message(
-            content=f"Setup complete! Buttons sent to {self.text_channel.mention}.",
+            content=f"Setup complete! Buttons sent to {channel.mention}.",
             embed=None, view=None,
         )
 
