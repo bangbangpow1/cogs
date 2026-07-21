@@ -296,8 +296,8 @@ class _CriminalEditView(discord.ui.View):
             ("case_number", "Case Number", data.get("case_number", ""), True, "e.g., CR-2026-001"),
             ("docket_title", "Docket Title", data.get("docket_title", ""), True, "e.g., State vs John Doe"),
             ("defendant", "Defendant", data.get("defendant", ""), True, "Full name"),
-            ("presiding_judge", "Presiding Judge", data.get("presiding_judge", ""), True, "Full name"),
-            ("prosecutor", "Prosecutor", data.get("prosecutor", ""), True, "Full name"),
+            ("presiding_judge", "Presiding Judge", data.get("presiding_judge", ""), False, "Full name"),
+            ("prosecutor", "Prosecutor", data.get("prosecutor", ""), False, "Full name"),
             ("attorney", "Attorney", data.get("attorney", ""), False, "Defense attorney"),
             ("filed_by", "Filed By", data.get("filed_by", ""), True, "Officer or DA"),
             ("witnesses", "Witnesses", data.get("witnesses", ""), False, "Witness names/IDs"),
@@ -369,8 +369,8 @@ class _DocketCreateView(discord.ui.View):
         if self._page == 1:
             self._add_select("defendant", "Select Defendant", 1, 1)
             self._add_select("attorney", "Select Attorney (optional)", 0, 1)
-            self._add_select("presiding_judge", "Select Presiding Judge", 1, 1)
-            self._add_select("prosecutor", "Select Prosecutor", 1, 1)
+            self._add_select("presiding_judge", "Select Presiding Judge (optional)", 0, 1)
+            self._add_select("prosecutor", "Select Prosecutor (optional)", 0, 1)
             btn = discord.ui.Button(label="Next \u2192", style=discord.ButtonStyle.primary, row=4)
             btn.callback = self._go_to_page(2)
             self.add_item(btn)
@@ -478,7 +478,7 @@ class _DocketCreateView(discord.ui.View):
                 await interaction.response.send_message(f"Case number `{case_id}` already exists.", ephemeral=True)
                 return
 
-        missing = [f for f in ("defendant", "presiding_judge", "prosecutor", "filed_by") if f not in self.selected or not self.selected[f]]
+        missing = [f for f in ("defendant", "filed_by") if f not in self.selected or not self.selected[f]]
         if missing:
             names = [f.replace("_", " ").title() for f in missing]
             await interaction.response.send_message(f"Please select: {', '.join(names)}", ephemeral=True)
