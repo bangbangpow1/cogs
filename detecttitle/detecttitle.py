@@ -185,7 +185,8 @@ class DetectTitle(commands.Cog):
         content = livestream_role.mention if livestream_role else ""
         try:
             return await channel.send(content=content, embed=embed)
-        except:
+        except Exception as e:
+            log.warning(f"Failed to post alert in #{channel.name} ({guild.name}): {e}")
             return None
 
     async def _monitor_loop(self):
@@ -265,6 +266,84 @@ class DetectTitle(commands.Cog):
             val = f"**User:** {user.mention if user else 'Not found'}\n" \
                   f"**Keywords:** {', '.join(data['keywords']) or 'Any'}"
             embed.add_field(name=f"{login} ({status})", value=val, inline=False)
+        await ctx.send(embed=embed)
+
+    @detecttitle.command(name="repair")
+    async def repair(self, ctx):
+        """Diagnose and fix monitors after moving the bot to a new machine.
+
+        Checks Twitch credentials, validates channels/users/roles,
+        resets stale stream tracking so live streams re-announce,
+        and forces an immediate stream check.
+        """
+        guild = ctx.guild
+        fixed = []
+        problems = []
+
+        async with ctx.typing():
+            # 1. Verify Twitch API credentials work on THIS machine
+            client_id, token = await self._get_twitch_auth()
+            if not client_id or not token:
+                prefix = ctx.clean_prefix
+                problems.append(
+                    "Twitch API credentials are missing or rejected on this machine.\n"
+                    f"Fix with: `{prefix}set api twitch client_id <id> client_secret <secret>`"
+                )
+            else:
+                fixed.append("Twitch API authentication working.")
+
+            monitors = await self.config.guild(guild).monitors()
+            if not monitors:
+                return await ctx.send("No monitors configured, nothing to repair.")
+
+            # 2. Validate announcement channel / member / role for each monitor
+            for login, data in monitors.items():
+                issues = []
+                if guild.get_channel(data.get("destination_channel")) is None:
+                    issues.append("announcement channel missing (re-add it)")
+                member = guild.get_member(data.get("user_id"))
+                if member is None:
+                    try:
+                        member = await guild.fetch_member(data.get("user_id"))
+                    except discord.HTTPException:
+                        member = None
+                if member is None:
+                    issues.append("tracked member not found in server")
+                if guild.get_role(data.get("role_id")) is None:
+                    issues.append("live role missing")
+                if issues:
+                    problems.append(f"`{login}`: " + ", ".join(issues))
+
+            # 3. Reset stale state from the old machine so anyone currently
+            #    live gets re-announced on the next check
+            had_stale = False
+            async with self.config.guild(guild).monitors() as m:
+                for data in m.values():
+                    if data.get("last_stream_id") is not None or data.get("last_message_id") is not None:
+                        data["last_stream_id"] = None
+                        data["last_message_id"] = None
+                        had_stale = True
+            if had_stale:
+                fixed.append("Reset stale stream/message tracking from the old machine.")
+            else:
+                fixed.append("Stream tracking was already clean.")
+
+            # 4. Force an immediate check instead of waiting for the next cycle
+            refreshed = await self.config.guild(guild).monitors()
+            asyncio.create_task(self._check_streams(guild.id, dict(refreshed)))
+
+        embed = discord.Embed(title="🔧 DetectTitle Repair", color=0x6441A5)
+        embed.add_field(
+            name="Fixed",
+            value="\n".join(f"✅ {f}" for f in fixed) or "Nothing to fix.",
+            inline=False,
+        )
+        embed.add_field(
+            name="Needs attention",
+            value="\n".join(f"⚠️ {p}" for p in problems) or "No problems found.",
+            inline=False,
+        )
+        embed.set_footer(text="Running an immediate stream check — alerts will re-post for anyone currently live.")
         await ctx.send(embed=embed)
 
     @detecttitle.command(name="creds")
